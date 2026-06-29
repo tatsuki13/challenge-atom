@@ -4,11 +4,6 @@ import {
   getTokyoDateKey,
 } from "./date";
 import {
-  buildConversationMemoryContext,
-  type ConversationMemoryContext,
-} from "./ai/adaptiveGuidance";
-import {
-  getDemoConversationMemoryContext,
   getDemoMetrics,
   recordDemoAssistantMessage,
   recordDemoUserMessage,
@@ -275,65 +270,6 @@ export async function recordAssistantMessage({
       emotionLabel,
       riskLevel,
     });
-  }
-}
-
-export async function getConversationMemoryContext({
-  storageMode,
-}: {
-  storageMode: StorageMode;
-}): Promise<ConversationMemoryContext | null> {
-  if (storageMode === "memory") {
-    return getDemoConversationMemoryContext();
-  }
-
-  const prisma = getPrismaClient();
-
-  if (!prisma) {
-    return getDemoConversationMemoryContext();
-  }
-
-  try {
-    await ensureDemoProfile(prisma);
-
-    const conversations = await prisma.conversation.findMany({
-      where: { profileId: DEMO_PROFILE_ID },
-      orderBy: { startedAt: "desc" },
-      take: 8,
-      select: {
-        id: true,
-        moodScoreStart: true,
-        moodScoreEnd: true,
-        startedAt: true,
-      },
-    });
-    const conversationIds = conversations.map((conversation) => conversation.id);
-
-    if (conversationIds.length === 0) {
-      return null;
-    }
-
-    const messages = await prisma.message.findMany({
-      where: {
-        conversationId: { in: conversationIds },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 80,
-    });
-
-    return buildConversationMemoryContext({
-      messages: messages
-        .map(toStoredMessage)
-        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()),
-      moodSnapshots: conversations.map((conversation) => ({
-        moodScoreStart: conversation.moodScoreStart,
-        moodScoreEnd: conversation.moodScoreEnd,
-        startedAt: conversation.startedAt,
-      })),
-    });
-  } catch {
-    console.warn("Conversation memory lookup failed.");
-    return null;
   }
 }
 

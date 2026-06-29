@@ -1,10 +1,72 @@
 import type { ResponseInputItem } from "openai/resources/responses/responses";
 import { RECENT_MESSAGE_LIMIT, type StoredChatMessage } from "../conversationTypes";
-import { CONVERSATION_POLICY } from "./conversationPolicy";
+import {
+  getRecentAssistantReplies,
+  type ConversationTurnPlan,
+} from "./conversationEngine";
 import { SYSTEM_PROMPT } from "./systemPrompt";
 
-export function buildAiInput({ messages }: { messages: StoredChatMessage[] }) {
+function clipForPrompt(text: string, maxLength = 180) {
+  return text.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function buildTurnPlanInstruction({
+  userMessage,
+  turnPlan,
+  recentAssistantReplies,
+}: {
+  userMessage: string;
+  turnPlan: ConversationTurnPlan;
+  recentAssistantReplies: string[];
+}) {
+  const lines = [
+    "# 今回の返答方針",
+    `- userMessage: ${clipForPrompt(userMessage)}`,
+    `- safetyLevel: ${turnPlan.safetyLevel}`,
+    `- mode: ${turnPlan.mode}`,
+    `- focusTerms: ${turnPlan.focusTerms.length > 0 ? turnPlan.focusTerms.join("、") : "なし"}`,
+    `- mainFocus: ${turnPlan.mainFocus ?? "なし"}`,
+    `- responseGoal: ${turnPlan.responseGoal}`,
+    `- shouldAskQuestion: ${turnPlan.shouldAskQuestion ? "true" : "false"}`,
+    "",
+    "# 必ず守ること",
+    "- mainFocus がある場合、まずその具体語に自然に反応してください。",
+    "- 感情確認だけで返さず、出てきた人物・場所・食べ物・趣味・物・出来事を雑談として扱ってください。",
+    "- shouldAskQuestion が false の場合は質問で終わらないでください。",
+    "- 質問する場合も、一度に一つだけにしてください。",
+    "- 「印象に残ったことは？」「その時はどんな感じでしたか？」のような汎用質問は禁止です。",
+    "- 返答は1〜2文を基本にしてください。",
+  ];
+
+  if (turnPlan.avoidPatterns.length > 0) {
+    lines.push("", "# 避けること");
+    turnPlan.avoidPatterns.forEach((pattern) => {
+      lines.push(`- ${pattern}`);
+    });
+  }
+
+  if (recentAssistantReplies.length > 0) {
+    lines.push("", "# 直近3件のAI返答");
+    recentAssistantReplies.forEach((reply, index) => {
+      lines.push(`- ${index + 1}: ${clipForPrompt(reply, 90)}`);
+    });
+    lines.push("- 同じ出だしや同じ質問を続けないでください。");
+  }
+
+  return lines.join("\n");
+}
+
+export function buildAiInput({
+  messages,
+  userMessage,
+  turnPlan,
+}: {
+  messages: StoredChatMessage[];
+  userMessage: string;
+  turnPlan: ConversationTurnPlan;
+}) {
   const recentMessages = messages.slice(-RECENT_MESSAGE_LIMIT);
+  const recentAssistantReplies = getRecentAssistantReplies(recentMessages);
   const input: ResponseInputItem[] = [
     {
       role: "system",
@@ -12,7 +74,11 @@ export function buildAiInput({ messages }: { messages: StoredChatMessage[] }) {
     },
     {
       role: "system",
-      content: CONVERSATION_POLICY,
+      content: buildTurnPlanInstruction({
+        userMessage,
+        turnPlan,
+        recentAssistantReplies,
+      }),
     },
     ...recentMessages.map((message) => {
       const role = message.role === "assistant" ? "assistant" : "user";

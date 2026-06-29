@@ -1,5 +1,10 @@
 import OpenAI from "openai";
 import { buildAiInput } from "@/lib/ai/buildAiInput";
+import {
+  analyzeConversationTurn,
+  getRecentAssistantReplies,
+  type ConversationTurnPlan,
+} from "@/lib/ai/conversationEngine";
 import { createMockReply } from "@/lib/ai/mockReply";
 import { estimateEmotion } from "@/lib/emotion";
 import {
@@ -40,8 +45,12 @@ function normalizeMoodScore(value: unknown) {
 
 async function createOpenAIReply({
   messages,
+  userMessage,
+  turnPlan,
 }: {
   messages: StoredChatMessage[];
+  userMessage: string;
+  turnPlan: ConversationTurnPlan;
 }) {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL;
@@ -51,7 +60,7 @@ async function createOpenAIReply({
   }
 
   const client = new OpenAI({ apiKey });
-  const input = buildAiInput({ messages });
+  const input = buildAiInput({ messages, userMessage, turnPlan });
 
   const response = await client.responses.create({
     model,
@@ -103,6 +112,14 @@ export async function POST(request: Request) {
     emotionLabel,
     riskLevel,
   });
+  const turnPlan = analyzeConversationTurn({
+    userMessage: message,
+    recentMessages: savedUserMessage.recentMessages,
+    recentAssistantReplies: getRecentAssistantReplies(
+      savedUserMessage.recentMessages,
+    ),
+    safetyResult: riskLevel,
+  });
 
   let reply: string | null = null;
   let usedMock = true;
@@ -111,6 +128,8 @@ export async function POST(request: Request) {
     try {
       reply = await createOpenAIReply({
         messages: savedUserMessage.recentMessages,
+        userMessage: message,
+        turnPlan,
       });
       usedMock = reply === null;
     } catch {
@@ -121,9 +140,8 @@ export async function POST(request: Request) {
   }
 
   reply ??= createMockReply({
-    message,
-    emotionLabel,
-    riskLevel,
+    userMessage: message,
+    turnPlan,
     recentMessages: savedUserMessage.recentMessages,
   });
 

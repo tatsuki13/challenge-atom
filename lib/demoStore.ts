@@ -1,9 +1,5 @@
 import { getTokyoDateKey } from "./date";
 import {
-  buildConversationMemoryContext,
-  type ConversationMemoryContext,
-} from "./ai/adaptiveGuidance";
-import {
   DEMO_PROFILE_ID,
   RECENT_MESSAGE_LIMIT,
   type ChatRole,
@@ -226,23 +222,4 @@ export function getDemoMetrics(): MetricsSummary {
     aiMode:
       process.env.OPENAI_API_KEY && process.env.OPENAI_MODEL ? "openai" : "mock",
   };
-}
-
-export function getDemoConversationMemoryContext(): ConversationMemoryContext {
-  const state = getState();
-  const conversations = [...state.conversations.values()]
-    .filter((conversation) => conversation.profileId === DEMO_PROFILE_ID)
-    .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
-    .slice(0, 8);
-
-  return buildConversationMemoryContext({
-    messages: conversations
-      .flatMap((conversation) => conversation.messages)
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()),
-    moodSnapshots: conversations.map((conversation) => ({
-      moodScoreStart: conversation.moodScoreStart,
-      moodScoreEnd: conversation.moodScoreEnd,
-      startedAt: conversation.startedAt,
-    })),
-  });
 }
