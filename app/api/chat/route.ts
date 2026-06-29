@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { buildAiInput } from "@/lib/ai/buildAiInput";
-import { detectConversationMode } from "@/lib/ai/conversationMode";
+import { planConversationReply } from "@/lib/ai/conversationPlanner";
 import { createMockReply } from "@/lib/ai/mockReply";
 import { estimateEmotion } from "@/lib/emotion";
 import {
@@ -14,7 +14,7 @@ import {
 } from "@/lib/conversationTypes";
 import { detectRisk } from "@/lib/safety";
 import type { ConversationMemoryContext } from "@/lib/ai/adaptiveGuidance";
-import type { ConversationMode } from "@/lib/ai/conversationMode";
+import type { ConversationPlan } from "@/lib/ai/conversationPlanner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,12 +46,12 @@ async function createOpenAIReply({
   messages,
   moodScore,
   memoryContext,
-  mode,
+  plan,
 }: {
   messages: StoredChatMessage[];
   moodScore: number | null;
   memoryContext: ConversationMemoryContext | null;
-  mode: ConversationMode;
+  plan: ConversationPlan;
 }) {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL;
@@ -71,7 +71,7 @@ async function createOpenAIReply({
     currentMessage,
     moodScore,
     memoryContext,
-    mode,
+    plan,
   });
 
   const response = await client.responses.create({
@@ -127,7 +127,7 @@ export async function POST(request: Request) {
   const memoryContext = await getConversationMemoryContext({
     storageMode: savedUserMessage.storageMode,
   });
-  const conversationMode = detectConversationMode({
+  const conversationPlan = planConversationReply({
     message,
     riskLevel,
     recentMessages: savedUserMessage.recentMessages,
@@ -142,7 +142,7 @@ export async function POST(request: Request) {
         messages: savedUserMessage.recentMessages,
         moodScore,
         memoryContext,
-        mode: conversationMode,
+        plan: conversationPlan,
       });
       usedMock = reply === null;
     } catch {
@@ -157,7 +157,7 @@ export async function POST(request: Request) {
     emotionLabel,
     riskLevel,
     moodScore,
-    mode: conversationMode,
+    plan: conversationPlan,
     recentMessages: savedUserMessage.recentMessages,
   });
 

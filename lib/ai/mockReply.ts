@@ -4,7 +4,11 @@ import type {
   StoredChatMessage,
 } from "../conversationTypes";
 import { getUrgentSafetyReply } from "../safety";
-import type { ConversationMode } from "./conversationMode";
+import type {
+  ConversationMode,
+  ConversationPlan,
+  ReplyPattern,
+} from "./conversationPlanner";
 
 const modeReplies: Record<ConversationMode, string[]> = {
   casual: [
@@ -84,6 +88,37 @@ const keywordReplies: Array<{ terms: string[]; replies: string[] }> = [
   },
 ];
 
+const patternReplies: Record<ReplyPattern, string[]> = {
+  small_talk_only: [
+    "へえ、そうだったんですね。そういう何気ない話、なんだかその日の感じが出ますね。",
+    "いいですね。そういう小さな出来事があると、一日が少し違って感じられますね。",
+    "なるほど。聞いていると、その場の様子が少し浮かんできます。",
+  ],
+  empathy_only: [
+    "そうでしたか。今日はその感じが少し残っているんですね。",
+    "うん、そういう日もありますね。急がず、そのまま話して大丈夫ですよ。",
+    "少し大変だったんですね。今はここでゆっくり話せます。",
+  ],
+  empathy_plus_question: [
+    "それは気になりますね。今いちばん引っかかっているのは、どのあたりですか？",
+    "うん、その感じは軽く見られないですね。今日はいつ頃から気になっていましたか？",
+  ],
+  concrete_reaction_plus_question: [
+    "それはいいですね。どんな感じだったんですか？",
+    "へえ、ちょっと気になりますね。何が一番印象に残りましたか？",
+  ],
+  continue_prompt: [
+    "それで、それで？",
+    "その話、もう少し聞きたいです。",
+    "うん、続きもゆっくり聞かせてください。",
+  ],
+  reminiscence_prompt: [
+    "その頃の話、いいですね。当時よく行っていた場所はありましたか？",
+    "懐かしい話ですね。その頃は、どんなことが楽しみでしたか？",
+  ],
+  safety_guidance: [getUrgentSafetyReply()],
+};
+
 function getRecentOpeners(recentMessages: StoredChatMessage[]) {
   return recentMessages
     .filter((message) => message.role === "assistant")
@@ -106,14 +141,14 @@ export function createMockReply({
   emotionLabel,
   riskLevel,
   moodScore,
-  mode,
+  plan,
   recentMessages = [],
 }: {
   message: string;
   emotionLabel: EmotionLabel;
   riskLevel: RiskLevel;
   moodScore?: number | null;
-  mode: ConversationMode;
+  plan: ConversationPlan;
   recentMessages?: StoredChatMessage[];
 }) {
   if (riskLevel === "urgent") {
@@ -124,28 +159,46 @@ export function createMockReply({
     item.terms.some((term) => message.includes(term)),
   );
 
-  if (keywordReply) {
+  if (keywordReply && plan.shouldAskQuestion) {
     return pickReply(keywordReply.replies, recentMessages);
   }
 
+  if (keywordReply) {
+    return pickReply(
+      keywordReply.replies.map((reply) => reply.replace(/。[^。？]*？$/, "。")),
+      recentMessages,
+    );
+  }
+
   if (emotionLabel === "neutral" && moodScore === 1) {
-    return "そうでしたか。今日は少し重たい感じの日なんですね。今、少し楽にできそうなことはありますか？";
+    return plan.shouldAskQuestion
+      ? "そうでしたか。今日は少し重たい感じの日なんですね。今、少し楽にできそうなことはありますか？"
+      : "そうでしたか。今日は少し重たい感じの日なんですね。無理に話を急がなくて大丈夫です。";
   }
 
   if (emotionLabel === "neutral" && moodScore === 2) {
-    return "うん、今日は少し無理をしないほうがよさそうですね。今はどんなふうに過ごされていますか？";
+    return plan.shouldAskQuestion
+      ? "うん、今日は少し無理をしないほうがよさそうですね。今はどんなふうに過ごされていますか？"
+      : "うん、今日は少し無理をしないほうがよさそうですね。ここではゆっくりで大丈夫です。";
   }
 
   if (emotionLabel === "neutral" && moodScore === 4) {
-    return "へえ、今日は少し良い感じなんですね。何かそう感じる出来事がありましたか？";
+    return plan.shouldAskQuestion
+      ? "へえ、今日は少し良い感じなんですね。何かそう感じる出来事がありましたか？"
+      : "へえ、今日は少し良い感じなんですね。そういう日は、声の調子も少し軽くなりますね。";
   }
 
   if (emotionLabel === "neutral" && moodScore === 5) {
-    return "それはいいですね。今日はどんなことが一番心に残っていますか？";
+    return plan.shouldAskQuestion
+      ? "それはいいですね。今日はどんなことが一番心に残っていますか？"
+      : "それはいいですね。こちらまで少し明るい気分になります。";
   }
 
   return pickReply(
-    emotionReplies[emotionLabel] ?? modeReplies[mode] ?? modeReplies.casual,
+    patternReplies[plan.replyPattern] ??
+      emotionReplies[emotionLabel] ??
+      modeReplies[plan.mode] ??
+      modeReplies.casual,
     recentMessages,
   );
 }

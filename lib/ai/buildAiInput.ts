@@ -8,10 +8,9 @@ import {
 } from "./adaptiveGuidance";
 import { CONVERSATION_POLICY } from "./conversationPolicy";
 import {
-  buildConversationModeInstruction,
-  type ConversationMode,
-} from "./conversationMode";
-import { buildReplyStyleInstruction } from "./replyStyle";
+  buildPlannerInstruction,
+  type ConversationPlan,
+} from "./conversationPlanner";
 import { SYSTEM_PROMPT } from "./systemPrompt";
 
 function clipForPrompt(text: string, maxLength = 160) {
@@ -61,18 +60,40 @@ function buildRelevantMemoryBlock({
   return lines.join("\n");
 }
 
+function buildRecentAssistantBlock(messages: StoredChatMessage[]) {
+  const assistantReplies = messages
+    .filter((message) => message.role === "assistant")
+    .slice(-3)
+    .map((message) => clipForPrompt(message.content, 80));
+
+  const lines = [
+    "# 直近3件のAI返答",
+    "- 同じ出だし、同じ構文、同じ質問が続かないようにしてください。",
+  ];
+
+  if (assistantReplies.length === 0) {
+    lines.push("- まだ直近のAI返答はありません。");
+  } else {
+    assistantReplies.forEach((reply, index) => {
+      lines.push(`- ${index + 1}: ${reply}`);
+    });
+  }
+
+  return lines.join("\n");
+}
+
 export function buildAiInput({
   messages,
   currentMessage,
   moodScore,
   memoryContext,
-  mode,
+  plan,
 }: {
   messages: StoredChatMessage[];
   currentMessage: string;
   moodScore: number | null;
   memoryContext: ConversationMemoryContext | null;
-  mode: ConversationMode;
+  plan: ConversationPlan;
 }) {
   const recentMessages = messages.slice(-RECENT_MESSAGE_LIMIT);
   const relevantMemory = selectRelevantMemoryContext({
@@ -94,7 +115,7 @@ export function buildAiInput({
     },
     {
       role: "system",
-      content: buildConversationModeInstruction(mode),
+      content: buildPlannerInstruction(plan),
     },
     {
       role: "system",
@@ -102,7 +123,7 @@ export function buildAiInput({
     },
     {
       role: "system",
-      content: buildReplyStyleInstruction({ mode, recentMessages }),
+      content: buildRecentAssistantBlock(recentMessages),
     },
     {
       role: "system",
