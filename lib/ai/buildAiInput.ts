@@ -14,10 +14,14 @@ function buildTurnPlanInstruction({
   userMessage,
   turnPlan,
   recentAssistantReplies,
+  topicStarter,
+  topicTitle,
 }: {
   userMessage: string;
   turnPlan: ConversationTurnPlan;
   recentAssistantReplies: string[];
+  topicStarter: boolean;
+  topicTitle: string | null;
 }) {
   const lines = [
     "# 今回の返答方針",
@@ -31,6 +35,8 @@ function buildTurnPlanInstruction({
     `- relationHint: ${turnPlan.relationHint ?? "なし"}`,
     `- responseGoal: ${turnPlan.responseGoal}`,
     `- shouldAskQuestion: ${turnPlan.shouldAskQuestion ? "true" : "false"}`,
+    `- topicStarter: ${topicStarter ? "true" : "false"}`,
+    `- topicTitle: ${topicTitle ?? "なし"}`,
     "",
     "# 必ず守ること",
     "- mainFocus がある場合、まずその具体語に自然に反応してください。",
@@ -43,6 +49,17 @@ function buildTurnPlanInstruction({
     "- is_trending の時は、流行している具体語に反応し、感情確認へ逃げないでください。",
     "- 返答は1〜2文を基本にしてください。",
   ];
+
+  if (topicStarter) {
+    lines.push(
+      "",
+      "# 今日の話題ボタンから始まった会話",
+      "- これは利用者が話題ボタンを押して始めた会話です。",
+      "- 「それでは今回はこの話題でお話ししましょう。」に近い自然な一言から始めてください。",
+      "- topicTitle に自然に触れ、利用者が答えやすい一問を一つだけ添えてください。",
+      "- ただし、面接や評価のような聞き方にはしないでください。",
+    );
+  }
 
   if (turnPlan.avoidPatterns.length > 0) {
     lines.push("", "# 避けること");
@@ -66,10 +83,14 @@ export function buildAiInput({
   messages,
   userMessage,
   turnPlan,
+  topicStarter = false,
+  topicTitle = null,
 }: {
   messages: StoredChatMessage[];
   userMessage: string;
   turnPlan: ConversationTurnPlan;
+  topicStarter?: boolean;
+  topicTitle?: string | null;
 }) {
   const recentMessages = messages.slice(-RECENT_MESSAGE_LIMIT);
   const recentAssistantReplies = getRecentAssistantReplies(recentMessages);
@@ -84,6 +105,8 @@ export function buildAiInput({
         userMessage,
         turnPlan,
         recentAssistantReplies,
+        topicStarter,
+        topicTitle,
       }),
     },
     ...recentMessages.map((message) => {

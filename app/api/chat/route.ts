@@ -47,10 +47,14 @@ async function createOpenAIReply({
   messages,
   userMessage,
   turnPlan,
+  topicStarter,
+  topicTitle,
 }: {
   messages: StoredChatMessage[];
   userMessage: string;
   turnPlan: ConversationTurnPlan;
+  topicStarter: boolean;
+  topicTitle: string | null;
 }) {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL;
@@ -60,7 +64,13 @@ async function createOpenAIReply({
   }
 
   const client = new OpenAI({ apiKey });
-  const input = buildAiInput({ messages, userMessage, turnPlan });
+  const input = buildAiInput({
+    messages,
+    userMessage,
+    turnPlan,
+    topicStarter,
+    topicTitle,
+  });
 
   const response = await client.responses.create({
     model,
@@ -77,6 +87,8 @@ export async function POST(request: Request) {
     conversationId?: unknown;
     moodScore?: unknown;
     speechEnabled?: unknown;
+    topicStarter?: unknown;
+    topicTitle?: unknown;
   };
 
   try {
@@ -91,6 +103,11 @@ export async function POST(request: Request) {
       ? body.conversationId
       : undefined;
   const moodScore = normalizeMoodScore(body.moodScore);
+  const topicStarter = body.topicStarter === true;
+  const topicTitle =
+    typeof body.topicTitle === "string" && body.topicTitle.length <= 120
+      ? body.topicTitle.trim()
+      : null;
 
   if (!message) {
     return jsonResponse({ error: "メッセージを入力してください。" }, 400);
@@ -130,6 +147,8 @@ export async function POST(request: Request) {
         messages: savedUserMessage.recentMessages,
         userMessage: message,
         turnPlan,
+        topicStarter,
+        topicTitle,
       });
       usedMock = reply === null;
     } catch {
@@ -143,6 +162,8 @@ export async function POST(request: Request) {
     userMessage: message,
     turnPlan,
     recentMessages: savedUserMessage.recentMessages,
+    topicStarter,
+    topicTitle,
   });
 
   await recordAssistantMessage({
@@ -159,5 +180,16 @@ export async function POST(request: Request) {
     emotionLabel,
     riskLevel,
     usedMock,
+    debug: {
+      usedMock,
+      mode: turnPlan.mode,
+      mainFocus: turnPlan.mainFocus,
+      focusTerms: turnPlan.focusTerms,
+      eventType: turnPlan.eventType,
+      topicType: turnPlan.topicType,
+      responseGoal: turnPlan.responseGoal,
+      shouldAskQuestion: turnPlan.shouldAskQuestion,
+      topicStarter,
+    },
   });
 }

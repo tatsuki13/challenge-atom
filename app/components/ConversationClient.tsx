@@ -14,6 +14,19 @@ type ChatMessage = {
   text: string;
   emotionLabel?: EmotionLabel;
   riskLevel?: RiskLevel;
+  debug?: ConversationDebug;
+};
+
+type ConversationDebug = {
+  usedMock: boolean;
+  mode: string;
+  mainFocus: string | null;
+  focusTerms: string[];
+  eventType: string;
+  topicType: string;
+  responseGoal: string;
+  shouldAskQuestion: boolean;
+  topicStarter: boolean;
 };
 
 type ChatResponse = {
@@ -22,6 +35,7 @@ type ChatResponse = {
   emotionLabel: EmotionLabel;
   riskLevel: RiskLevel;
   usedMock: boolean;
+  debug?: ConversationDebug;
 };
 
 type SpeechRecognitionResultLike = {
@@ -143,6 +157,7 @@ export default function ConversationClient() {
   const [sending, setSending] = useState(false);
   const [topicIndex, setTopicIndex] = useState(0);
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
+  const [latestDebug, setLatestDebug] = useState<ConversationDebug | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -325,10 +340,17 @@ export default function ConversationClient() {
     };
   }, [sending, startListening, stopListening]);
 
-  async function sendMessage(event?: FormEvent<HTMLFormElement>) {
-    event?.preventDefault();
-
-    const text = input.trim();
+  async function submitMessage({
+    text,
+    displayText = text,
+    topicStarter = false,
+    topicTitle = null,
+  }: {
+    text: string;
+    displayText?: string;
+    topicStarter?: boolean;
+    topicTitle?: string | null;
+  }) {
     if (!text || sending) {
       return;
     }
@@ -336,7 +358,7 @@ export default function ConversationClient() {
     const userMessage: ChatMessage = {
       id: createClientId(),
       role: "user",
-      text,
+      text: displayText,
       riskLevel: "none",
     };
 
@@ -355,6 +377,8 @@ export default function ConversationClient() {
           conversationId,
           moodScore,
           speechEnabled,
+          topicStarter,
+          topicTitle,
         }),
         cache: "no-store",
       });
@@ -378,9 +402,11 @@ export default function ConversationClient() {
         text: data.reply,
         emotionLabel: data.emotionLabel,
         riskLevel: data.riskLevel,
+        debug: data.debug,
       };
 
       setConversationId(data.conversationId);
+      setLatestDebug(data.debug ?? null);
       setMessages((current) => [...current, assistantMessage]);
       speak(data.reply);
       void refreshMetrics();
@@ -398,11 +424,26 @@ export default function ConversationClient() {
     }
   }
 
-  function chooseTopic() {
+  async function sendMessage(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+
+    await submitMessage({ text: input.trim() });
+  }
+
+  async function chooseTopic() {
+    if (sending) {
+      return;
+    }
+
     const nextTopic = topics[topicIndex % topics.length];
-    setInput(nextTopic);
     setTopicIndex((current) => current + 1);
-    textareaRef.current?.focus();
+    setInput("");
+    await submitMessage({
+      text: `今日の話題: ${nextTopic}`,
+      displayText: `今日の話題: ${nextTopic}`,
+      topicStarter: true,
+      topicTitle: nextTopic,
+    });
   }
 
   return (
@@ -460,6 +501,14 @@ export default function ConversationClient() {
                         {isAssistant ? "聞き手" : "あなた"}
                       </p>
                       <p>{message.text}</p>
+                      {message.debug ? (
+                        <p className="mt-3 border-t border-[#bfd7cc] pt-2 text-sm leading-6 text-[#4d6a60]">
+                          制御: {message.debug.usedMock ? "mock" : "OpenAI"} / focus:{" "}
+                          {message.debug.mainFocus ?? "なし"} / event:{" "}
+                          {message.debug.eventType} / topic:{" "}
+                          {message.debug.topicType}
+                        </p>
+                      ) : null}
                     </div>
                   </article>
                 );
@@ -592,6 +641,42 @@ export default function ConversationClient() {
                 </div>
               </dl>
             </section>
+
+            {latestDebug ? (
+              <section className="rounded-lg border border-[#d7e0ea] bg-white p-5 shadow-sm">
+                <h2 className="text-2xl font-bold text-[#1d2733]">
+                  会話制御
+                </h2>
+                <dl className="mt-4 space-y-2 text-base leading-7 text-[#405163]">
+                  <div>
+                    <dt className="inline font-bold">生成</dt>
+                    <dd className="inline">
+                      : {latestDebug.usedMock ? "mock" : "OpenAI"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-bold">focus</dt>
+                    <dd className="inline">
+                      : {latestDebug.mainFocus ?? "なし"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-bold">event</dt>
+                    <dd className="inline">: {latestDebug.eventType}</dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-bold">topic</dt>
+                    <dd className="inline">: {latestDebug.topicType}</dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-bold">question</dt>
+                    <dd className="inline">
+                      : {latestDebug.shouldAskQuestion ? "yes" : "no"}
+                    </dd>
+                  </div>
+                </dl>
+              </section>
+            ) : null}
 
             <section className="rounded-lg border border-[#d7e0ea] bg-white p-5 text-lg leading-8 text-[#405163] shadow-sm">
               <h2 className="text-2xl font-bold text-[#1d2733]">

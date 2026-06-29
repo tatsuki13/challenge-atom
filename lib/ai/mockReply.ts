@@ -349,13 +349,21 @@ export function createMockReply({
   userMessage,
   turnPlan,
   recentMessages = [],
+  topicStarter = false,
+  topicTitle = null,
 }: {
   userMessage: string;
   turnPlan: ConversationTurnPlan;
   recentMessages?: StoredChatMessage[];
+  topicStarter?: boolean;
+  topicTitle?: string | null;
 }) {
   if (turnPlan.safetyLevel === "urgent") {
     return getUrgentSafetyReply();
+  }
+
+  if (topicStarter && topicTitle) {
+    return `それでは今回は「${topicTitle}」でお話ししましょう。まず、そのことでぱっと思い浮かぶことはありますか？`;
   }
 
   const focusReply =
