@@ -247,7 +247,7 @@ function chooseBasePattern({
   }
 
   if (mode === "daily_life") {
-    return questionRecently ? "small_talk_only" : "small_talk_only";
+    return questionRecently ? "small_talk_only" : "concrete_reaction_plus_question";
   }
 
   const casualPatterns: ReplyPattern[] = [
@@ -331,6 +331,7 @@ function avoidTopicsFromMode(mode: ConversationMode) {
     "生活チェックリスト",
     "急な解決策",
     "評価しているような言い方",
+    "具体的な反応のない空返事",
   ];
 
   if (mode === "loneliness") {
@@ -403,7 +404,9 @@ export function buildPlannerInstruction(plan: ConversationPlan) {
     `- avoidTopics: ${plan.avoidTopics.join("、")}`,
     "",
     "この計画に従って、自然な日本語で返答してください。",
+    "最後の利用者発話への返事を最優先にしてください。",
     "shouldAskQuestion が false の時は質問で終えないでください。",
+    "ただし、具体的な反応がない空返事だけで終えないでください。",
     "質問する場合も一度に一つだけにしてください。",
     "replyPattern をそのまま説明しないでください。",
   ].join("\n");
