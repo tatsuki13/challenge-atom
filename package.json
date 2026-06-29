@@ -4,11 +4,16 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "clean:cache": "rm -rf .next .turbo .vercel/output node_modules/.cache .cache",
+    "clean:all": "rm -rf .next .turbo .vercel/output node_modules/.cache .cache && npm cache verify"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "next": "16.2.9",
     "openai": "^6.45.0",

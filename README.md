@@ -1,36 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Challenge ATOM Conversation AI
 
-## Getting Started
+高齢者が毎日気軽に話せる、やさしい会話AIのMVPプロトタイプです。医療機器や診断ツールではなく、孤独感、不安、会話量低下への支援として「話を聞く」「回想を促す」「やさしく質問する」「会話量を記録する」ことを目的にしています。
 
-First, run the development server:
+## MVP機能
+
+- 高齢者向けの大きな文字と大きなボタンの日本語チャットUI
+- テキスト会話、ブラウザ対応時の音声入力、読み上げON/OFF
+- CSSだけで描画するAI側の小さな相棒アバター
+- 危険表現の簡易検知と安全優先の返答
+- 感情ラベルの簡易推定
+- OpenAI Responses API接続準備
+- Neon PostgreSQL向けPrisma schema
+- `DATABASE_URL` 未設定時のメモリ保存フォールバック
+- 今日の会話回数、発話数、推定時間、文字数、気分スコア、risk件数のKPI表示
+- 会話本文をブラウザのlocalStorageやキャッシュに保存しない構成
+
+## セットアップ
 
 ```bash
+npm install
+npm run prisma:generate
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+ローカル起動後、`http://localhost:3000` を開きます。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 環境変数
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`.env.example` を参考に、必要な値をローカル環境やVercel環境変数へ設定してください。実値はGitに入れないでください。
 
-## Learn More
+```bash
+OPENAI_API_KEY=
+OPENAI_MODEL=
+DATABASE_URL=
+NEXT_PUBLIC_APP_NAME="Challenge ATOM Conversation AI"
+NEXT_TELEMETRY_DISABLED=1
+```
 
-To learn more about Next.js, take a look at the following resources:
+`OPENAI_API_KEY` または `OPENAI_MODEL` が未設定の場合、実APIは呼ばずにモック応答で動きます。`DATABASE_URL` が未設定の場合、会話履歴とKPIはサーバー上のメモリに保存され、再起動で消えます。
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Neon接続
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+NeonのPostgreSQL接続文字列を `DATABASE_URL` に設定した後、以下を実行します。
 
-## Deploy on Vercel
+```bash
+npm run prisma:generate
+npm run prisma:push
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 品質確認
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run prisma:generate
+npm run lint
+npm run build
+```
+
+Next.js 16では `next lint` が削除されているため、lintはESLint CLIで実行します。
+
+## キャッシュ削除
+
+```bash
+npm run clean:cache
+```
+
+`clean:all` は `node_modules` や `package-lock.json` を削除せず、不要キャッシュ削除後に `npm cache verify` だけを行います。
+
+## Vercel環境変数
+
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
+- `DATABASE_URL`
+- `NEXT_PUBLIC_APP_NAME`
+- `NEXT_TELEMETRY_DISABLED`
+
+## プライバシー方針
+
+- 会話本文をブラウザキャッシュ、localStorage、sessionStorage、IndexedDBに保存しません。
+- 本人同意なしに家族共有しません。
+- 音声入力はWeb Speech APIを使い、録音ファイルを生成・保存しません。
+- 読み上げはブラウザの `speechSynthesis` を使い、音声ファイルを生成・保存しません。
+- OpenAI Responses API呼び出しでは `store: false` を指定します。
+- 医療診断、認知症診断、治療判断はしません。
+
+## 今後の拡張
+
+- ログイン
+- 家族共有
+- 行政イベント提案
+- ロボット連携
+- 長期利用分析
+- 4週間評価
