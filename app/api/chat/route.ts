@@ -156,7 +156,6 @@ export async function POST(request: Request) {
     message,
     emotionLabel,
     riskLevel,
-    moodScore,
     plan: conversationPlan,
     recentMessages: savedUserMessage.recentMessages,
   });

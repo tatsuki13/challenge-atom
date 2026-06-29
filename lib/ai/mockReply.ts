@@ -140,14 +140,12 @@ export function createMockReply({
   message,
   emotionLabel,
   riskLevel,
-  moodScore,
   plan,
   recentMessages = [],
 }: {
   message: string;
   emotionLabel: EmotionLabel;
   riskLevel: RiskLevel;
-  moodScore?: number | null;
   plan: ConversationPlan;
   recentMessages?: StoredChatMessage[];
 }) {
@@ -168,30 +166,6 @@ export function createMockReply({
       keywordReply.replies.map((reply) => reply.replace(/。[^。？]*？$/, "。")),
       recentMessages,
     );
-  }
-
-  if (emotionLabel === "neutral" && moodScore === 1) {
-    return plan.shouldAskQuestion
-      ? "そうでしたか。今日は少し重たい感じの日なんですね。今、少し楽にできそうなことはありますか？"
-      : "そうでしたか。今日は少し重たい感じの日なんですね。無理に話を急がなくて大丈夫です。";
-  }
-
-  if (emotionLabel === "neutral" && moodScore === 2) {
-    return plan.shouldAskQuestion
-      ? "うん、今日は少し無理をしないほうがよさそうですね。今はどんなふうに過ごされていますか？"
-      : "うん、今日は少し無理をしないほうがよさそうですね。ここではゆっくりで大丈夫です。";
-  }
-
-  if (emotionLabel === "neutral" && moodScore === 4) {
-    return plan.shouldAskQuestion
-      ? "へえ、今日は少し良い感じなんですね。何かそう感じる出来事がありましたか？"
-      : "へえ、今日は少し良い感じなんですね。そういう日は、声の調子も少し軽くなりますね。";
-  }
-
-  if (emotionLabel === "neutral" && moodScore === 5) {
-    return plan.shouldAskQuestion
-      ? "それはいいですね。今日はどんなことが一番心に残っていますか？"
-      : "それはいいですね。こちらまで少し明るい気分になります。";
   }
 
   return pickReply(
