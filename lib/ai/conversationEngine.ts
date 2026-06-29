@@ -9,6 +9,29 @@ export type ConversationMode =
   | "continuation"
   | "safety";
 
+export type EventType =
+  | "talked_with"
+  | "met"
+  | "went_to"
+  | "ate"
+  | "saw"
+  | "made"
+  | "heard_about"
+  | "is_trending"
+  | "remembered"
+  | "felt"
+  | "unknown";
+
+export type TopicType =
+  | "person"
+  | "place"
+  | "food"
+  | "activity"
+  | "object"
+  | "memory"
+  | "feeling"
+  | "unknown";
+
 export type ResponseGoal =
   | "react"
   | "chat"
@@ -23,76 +46,196 @@ export type ConversationTurnPlan = {
   mode: ConversationMode;
   focusTerms: string[];
   mainFocus: string | null;
+  eventType: EventType;
+  relationHint: string | null;
+  topicType: TopicType;
   responseGoal: ResponseGoal;
   shouldAskQuestion: boolean;
   avoidPatterns: string[];
 };
 
-type FocusCategory =
-  | "person"
-  | "place"
-  | "food"
-  | "activity"
-  | "object"
-  | "event"
-  | "emotion"
-  | "idea";
+type CandidateSource = "pattern" | "proper_noun" | "dictionary";
 
 type FocusRule = {
   label: string;
   terms: string[];
-  category: FocusCategory;
+  topicType: TopicType;
   weight: number;
 };
 
 type FocusCandidate = {
   label: string;
-  category: FocusCategory;
+  eventType: EventType;
+  relationHint: string | null;
+  topicType: TopicType;
   index: number;
   score: number;
+  source: CandidateSource;
+};
+
+type PatternRule = {
+  eventType: EventType;
+  topicType: TopicType;
+  relationHint: string | null;
+  score: number;
+  patterns: RegExp[];
 };
 
 const focusRules: FocusRule[] = [
-  { label: "先生", terms: ["先生", "医者", "医師"], category: "person", weight: 120 },
-  { label: "友人", terms: ["友人", "友達", "知り合い"], category: "person", weight: 115 },
-  { label: "家族", terms: ["家族", "息子", "娘", "孫", "子ども", "子供"], category: "person", weight: 112 },
-  { label: "夫", terms: ["夫", "主人"], category: "person", weight: 112 },
-  { label: "妻", terms: ["妻", "家内"], category: "person", weight: 112 },
-  { label: "スーパー", terms: ["スーパー"], category: "place", weight: 104 },
-  { label: "病院", terms: ["病院", "医院", "診療所"], category: "place", weight: 104 },
-  { label: "公園", terms: ["公園"], category: "place", weight: 102 },
-  { label: "学校", terms: ["学校", "学生時代"], category: "place", weight: 102 },
-  { label: "職場", terms: ["職場", "会社"], category: "place", weight: 102 },
-  { label: "家", terms: ["家", "自宅", "部屋"], category: "place", weight: 88 },
-  { label: "カレー", terms: ["カレー"], category: "food", weight: 118 },
-  { label: "魚", terms: ["魚"], category: "food", weight: 108 },
-  { label: "野菜", terms: ["野菜"], category: "food", weight: 108 },
-  { label: "弁当", terms: ["弁当", "お弁当"], category: "food", weight: 108 },
-  { label: "ご飯", terms: ["ご飯", "食事"], category: "food", weight: 96 },
-  { label: "ハウジング", terms: ["ハウジング"], category: "activity", weight: 118 },
-  { label: "畑", terms: ["畑"], category: "activity", weight: 122 },
-  { label: "散歩", terms: ["散歩"], category: "activity", weight: 108 },
-  { label: "テレビ", terms: ["テレビ"], category: "activity", weight: 100 },
-  { label: "買い物", terms: ["買い物"], category: "activity", weight: 106 },
-  { label: "料理", terms: ["料理", "作った"], category: "activity", weight: 100 },
-  { label: "蔵", terms: ["蔵"], category: "object", weight: 132 },
-  { label: "花", terms: ["花", "桜"], category: "object", weight: 112 },
-  { label: "写真", terms: ["写真"], category: "object", weight: 110 },
-  { label: "本", terms: ["本", "新聞"], category: "object", weight: 96 },
-  { label: "トレンド", terms: ["トレンド", "流行", "人気"], category: "idea", weight: 78 },
-  { label: "話した", terms: ["話した", "話して", "話しました", "おしゃべり"], category: "event", weight: 70 },
-  { label: "電話", terms: ["電話"], category: "event", weight: 84 },
-  { label: "会った", terms: ["会った", "会いました", "会えて"], category: "event", weight: 78 },
-  { label: "出かけた", terms: ["出かけた", "外に出", "行った"], category: "event", weight: 70 },
-  { label: "食べた", terms: ["食べた", "食べました"], category: "event", weight: 68 },
-  { label: "見た", terms: ["見た", "見ました"], category: "event", weight: 62 },
-  { label: "楽しい", terms: ["楽しい", "楽しかった", "うれしい", "嬉しい"], category: "emotion", weight: 40 },
-  { label: "寂しい", terms: ["寂しい", "さびしい"], category: "emotion", weight: 48 },
-  { label: "不安", terms: ["不安", "心配", "気になる"], category: "emotion", weight: 48 },
-  { label: "疲れた", terms: ["疲れた", "疲れ"], category: "emotion", weight: 48 },
+  { label: "先生", terms: ["先生", "医者", "医師"], topicType: "person", weight: 86 },
+  { label: "友人", terms: ["友人", "友達", "知り合い"], topicType: "person", weight: 84 },
+  { label: "家族", terms: ["家族", "息子", "娘", "孫", "子ども", "子供"], topicType: "person", weight: 82 },
+  { label: "夫", terms: ["夫", "主人"], topicType: "person", weight: 82 },
+  { label: "妻", terms: ["妻", "家内"], topicType: "person", weight: 82 },
+  { label: "スーパー", terms: ["スーパー"], topicType: "place", weight: 76 },
+  { label: "病院", terms: ["病院", "医院", "診療所"], topicType: "place", weight: 76 },
+  { label: "公園", terms: ["公園"], topicType: "place", weight: 74 },
+  { label: "学校", terms: ["学校", "学生時代"], topicType: "place", weight: 72 },
+  { label: "職場", terms: ["職場", "会社"], topicType: "place", weight: 72 },
+  { label: "カレー", terms: ["カレー"], topicType: "food", weight: 80 },
+  { label: "魚", terms: ["魚"], topicType: "food", weight: 72 },
+  { label: "野菜", terms: ["野菜"], topicType: "food", weight: 72 },
+  { label: "弁当", terms: ["弁当", "お弁当"], topicType: "food", weight: 72 },
+  { label: "ハウジング", terms: ["ハウジング"], topicType: "activity", weight: 78 },
+  { label: "畑", terms: ["畑"], topicType: "activity", weight: 80 },
+  { label: "散歩", terms: ["散歩"], topicType: "activity", weight: 72 },
+  { label: "テレビ", terms: ["テレビ"], topicType: "activity", weight: 66 },
+  { label: "買い物", terms: ["買い物"], topicType: "activity", weight: 70 },
+  { label: "蔵", terms: ["蔵"], topicType: "object", weight: 82 },
+  { label: "花", terms: ["花", "桜"], topicType: "object", weight: 72 },
+  { label: "写真", terms: ["写真"], topicType: "object", weight: 72 },
+  { label: "本", terms: ["本", "新聞"], topicType: "object", weight: 62 },
+  { label: "楽しい", terms: ["楽しい", "楽しかった", "うれしい", "嬉しい"], topicType: "feeling", weight: 34 },
+  { label: "寂しい", terms: ["寂しい", "さびしい"], topicType: "feeling", weight: 38 },
+  { label: "不安", terms: ["不安", "心配", "気になる"], topicType: "feeling", weight: 38 },
+  { label: "疲れた", terms: ["疲れた", "疲れ"], topicType: "feeling", weight: 38 },
+];
+
+const patternRules: PatternRule[] = [
+  {
+    eventType: "is_trending",
+    topicType: "object",
+    relationHint: null,
+    score: 330,
+    patterns: [
+      /(?:最近は|最近|今は)?(.{1,32}?)(?:が|は)(?:トレンド|流行っている|流行ってる|流行|人気)(?:らしい|みたい|です|だ|になっている|になってる)?/,
+    ],
+  },
+  {
+    eventType: "talked_with",
+    topicType: "person",
+    relationHint: "話し相手",
+    score: 310,
+    patterns: [
+      /(.{1,32}?)(?:と|に)(?:たくさん|少し|ちょっと)?(?:話した|話しました|話していた|話してた|おしゃべりをした|おしゃべりした|おしゃべりをしました|おしゃべりしました)/,
+    ],
+  },
+  {
+    eventType: "met",
+    topicType: "person",
+    relationHint: "会った相手",
+    score: 300,
+    patterns: [
+      /(.{1,32}?)(?:に|と)(?:会った|会いました|会ってきた|会ってきました|会えた|会えました)/,
+    ],
+  },
+  {
+    eventType: "heard_about",
+    topicType: "person",
+    relationHint: "話の出どころ",
+    score: 292,
+    patterns: [
+      /(.{1,32}?)(?:から聞いた|から聞きました|に言われた|に言われました)/,
+    ],
+  },
+  {
+    eventType: "went_to",
+    topicType: "place",
+    relationHint: null,
+    score: 286,
+    patterns: [
+      /(.{1,32}?)(?:へ|に|まで)(?:行った|行きました|出かけた|出かけました|寄った|寄りました)/,
+    ],
+  },
+  {
+    eventType: "ate",
+    topicType: "food",
+    relationHint: null,
+    score: 282,
+    patterns: [
+      /(.{1,24}?)(?:を)?(?:食べた|食べました)/,
+    ],
+  },
+  {
+    eventType: "made",
+    topicType: "food",
+    relationHint: null,
+    score: 274,
+    patterns: [
+      /(.{1,24}?)(?:を)?(?:作った|作りました|買った|買いました)/,
+    ],
+  },
+  {
+    eventType: "saw",
+    topicType: "object",
+    relationHint: null,
+    score: 266,
+    patterns: [
+      /(.{1,24}?)(?:を)?(?:見た|見ました|見かけた|見かけました)/,
+    ],
+  },
+  {
+    eventType: "heard_about",
+    topicType: "activity",
+    relationHint: "話題",
+    score: 258,
+    patterns: [
+      /(.{1,32}?)(?:について|の話を|の話)(?:話した|話しました|話していた|話してた|聞いた|聞きました)/,
+    ],
+  },
+  {
+    eventType: "remembered",
+    topicType: "memory",
+    relationHint: null,
+    score: 250,
+    patterns: [
+      /昔は(.{1,32}?)(?:していた|していました|してた|だった|でした)/,
+      /若い頃は(.{1,32}?)(?:していた|していました|してた|だった|でした)/,
+      /前は(.{1,32}?)(?:していた|していました|してた|だった|でした)/,
+      /昔の(.{1,32}?)(?:を)?思い出した/,
+      /(.{1,32}?)(?:を)?思い出した/,
+    ],
+  },
+  {
+    eventType: "felt",
+    topicType: "feeling",
+    relationHint: null,
+    score: 100,
+    patterns: [
+      /(.{1,16}?)(?:かった|でした|です|だよ|だね)$/,
+    ],
+  },
 ];
 
 const katakanaStopWords = new Set(["テレビ", "スーパー", "カレー"]);
+const leadingNoise = [
+  "今日は",
+  "今日",
+  "昨日は",
+  "昨日",
+  "この前は",
+  "この前",
+  "最近は",
+  "最近",
+  "昔は",
+  "前は",
+  "若い頃は",
+  "若いころは",
+  "ちょっと",
+  "たくさん",
+];
+const trailingNoisePattern =
+  /(について|の話|のこと|を|に|へ|まで|と|が|は|も|で|から|です|でした|だった|だ|らしい|みたい|していた|してた)$/;
 
 const reminiscenceTerms = [
   "昔",
@@ -102,7 +245,6 @@ const reminiscenceTerms = [
   "昔の仕事",
   "学生時代",
   "懐かしい",
-  "畑",
 ];
 
 const lonelinessTerms = [
@@ -134,11 +276,14 @@ const dailyLifeTerms = [
   "疲れた",
   "スーパー",
   "ご飯",
+  "行った",
 ];
 
 const genericQuestionPatterns = [
   "その時はどんな感じでしたか？",
   "印象に残ったことはありましたか？",
+  "どう思いましたか？",
+  "どんな気持ちでしたか？",
   "睡眠はどうですか？",
   "食事はどうですか？",
   "誰と話しましたか？",
@@ -153,6 +298,42 @@ function escapeRegExp(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function normalizeFocus(raw: string) {
+  const segments = raw
+    .split(/(?:だけど|けど|けれど|、|。)/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  let text = segments.at(-1) ?? raw;
+
+  for (const marker of ["最近は", "最近", "今は"]) {
+    const index = text.lastIndexOf(marker);
+
+    if (index > 0) {
+      text = text.slice(index + marker.length);
+    }
+  }
+
+  text = text.replace(/[「」『』"'.、。！？!?]/g, "").replace(/\s+/g, "").trim();
+
+  for (const noise of leadingNoise) {
+    if (text.startsWith(noise)) {
+      text = text.slice(noise.length);
+    }
+  }
+
+  let previous = "";
+  while (text && previous !== text) {
+    previous = text;
+    text = text.replace(trailingNoisePattern, "");
+  }
+
+  return text.trim();
+}
+
+function isUsableFocus(text: string) {
+  return text.length > 0 && text.length <= 32 && !/^(こと|もの|それ|これ|あれ)$/.test(text);
+}
+
 function findTermIndex(text: string, terms: string[]) {
   const indexes = terms
     .map((term) => text.indexOf(term))
@@ -161,35 +342,20 @@ function findTermIndex(text: string, terms: string[]) {
   return indexes.length > 0 ? Math.min(...indexes) : -1;
 }
 
-function contextBoost({
-  label,
-  category,
-  text,
-}: {
-  label: string;
-  category: FocusCategory;
-  text: string;
-}) {
-  let boost = 0;
-  const escaped = escapeRegExp(label);
+function knownTopicType(label: string): TopicType | null {
+  const rule = focusRules.find(
+    (item) => item.label === label || item.terms.includes(label),
+  );
 
-  if (new RegExp(`${escaped}.{0,8}(トレンド|流行|人気)`).test(text)) {
-    boost += 60;
+  return rule?.topicType ?? null;
+}
+
+function topicTypeForPattern(label: string, fallback: TopicType) {
+  if (fallback === "memory" || fallback === "person") {
+    return fallback;
   }
 
-  if (category === "object" && includesAny(text, ["トレンド", "流行", "人気"])) {
-    boost += 35;
-  }
-
-  if (category === "person" && /話|電話|会/.test(text)) {
-    boost += 30;
-  }
-
-  if (category === "food" && /食べ|作/.test(text)) {
-    boost += 25;
-  }
-
-  return boost;
+  return knownTopicType(label) ?? fallback;
 }
 
 function mergeCandidate(
@@ -200,6 +366,57 @@ function mergeCandidate(
 
   if (!existing || candidate.score > existing.score) {
     candidates.set(candidate.label, candidate);
+  }
+}
+
+function extractPatternCandidates(text: string, candidates: Map<string, FocusCandidate>) {
+  for (const rule of patternRules) {
+    for (const pattern of rule.patterns) {
+      const match = pattern.exec(text);
+      const rawFocus = match?.[1];
+
+      if (!rawFocus) {
+        continue;
+      }
+
+      const label = normalizeFocus(rawFocus);
+
+      if (!isUsableFocus(label)) {
+        continue;
+      }
+
+      mergeCandidate(candidates, {
+        label,
+        eventType: rule.eventType,
+        relationHint: rule.relationHint,
+        topicType: topicTypeForPattern(label, rule.topicType),
+        index: match.index + match[0].indexOf(rawFocus),
+        score: rule.score,
+        source: "pattern",
+      });
+    }
+  }
+}
+
+function extractDictionaryCandidates(text: string, candidates: Map<string, FocusCandidate>) {
+  for (const rule of focusRules) {
+    const index = findTermIndex(text, rule.terms);
+
+    if (index < 0) {
+      continue;
+    }
+
+    const isFeeling = rule.topicType === "feeling";
+
+    mergeCandidate(candidates, {
+      label: rule.label,
+      eventType: isFeeling ? "felt" : "unknown",
+      relationHint: null,
+      topicType: rule.topicType,
+      index,
+      score: rule.weight,
+      source: "dictionary",
+    });
   }
 }
 
@@ -215,46 +432,53 @@ function extractKatakanaCandidates(text: string, candidates: Map<string, FocusCa
 
     mergeCandidate(candidates, {
       label,
-      category: "object",
+      eventType: "unknown",
+      relationHint: null,
+      topicType: "object",
       index: match.index ?? text.indexOf(label),
-      score: 82,
+      score: 130,
+      source: "proper_noun",
     });
   }
+}
+
+function boostContext(candidate: FocusCandidate, text: string) {
+  let score = candidate.score;
+  const escaped = escapeRegExp(candidate.label);
+
+  if (new RegExp(`${escaped}.{0,8}(トレンド|流行|人気)`).test(text)) {
+    score += 45;
+  }
+
+  if (candidate.topicType === "person" && /話|電話|おしゃべり|会/.test(text)) {
+    score += 25;
+  }
+
+  if (candidate.topicType === "food" && /食べ|作|買/.test(text)) {
+    score += 20;
+  }
+
+  if (candidate.eventType !== "unknown") {
+    score += 20;
+  }
+
+  return { ...candidate, score };
 }
 
 function extractFocusCandidates(text: string) {
   const candidates = new Map<string, FocusCandidate>();
 
-  for (const rule of focusRules) {
-    const index = findTermIndex(text, rule.terms);
-
-    if (index < 0) {
-      continue;
-    }
-
-    mergeCandidate(candidates, {
-      label: rule.label,
-      category: rule.category,
-      index,
-      score:
-        rule.weight +
-        contextBoost({
-          label: rule.label,
-          category: rule.category,
-          text,
-        }),
-    });
-  }
-
+  extractPatternCandidates(text, candidates);
   extractKatakanaCandidates(text, candidates);
+  extractDictionaryCandidates(text, candidates);
 
-  return [...candidates.values()].sort(
-    (a, b) => b.score - a.score || a.index - b.index,
-  );
+  return [...candidates.values()]
+    .map((candidate) => boostContext(candidate, text))
+    .sort((a, b) => b.score - a.score || a.index - b.index);
 }
 
 function isConcreteCandidate(candidate: FocusCandidate) {
-  return candidate.category !== "emotion";
+  return candidate.topicType !== "feeling";
 }
 
 function getAssistantReplies({
@@ -315,16 +539,22 @@ function detectMode({
   userMessage,
   recentMessages,
   safetyResult,
+  topCandidate,
 }: {
   userMessage: string;
   recentMessages: StoredChatMessage[];
   safetyResult: RiskLevel;
+  topCandidate: FocusCandidate | null;
 }): ConversationMode {
   if (safetyResult === "urgent") {
     return "safety";
   }
 
-  if (includesAny(userMessage, reminiscenceTerms)) {
+  if (
+    topCandidate?.eventType === "remembered" ||
+    topCandidate?.topicType === "memory" ||
+    includesAny(userMessage, reminiscenceTerms)
+  ) {
     return "reminiscence";
   }
 
@@ -336,7 +566,11 @@ function detectMode({
     return "anxiety";
   }
 
-  if (includesAny(userMessage, dailyLifeTerms)) {
+  if (
+    topCandidate?.eventType === "ate" ||
+    topCandidate?.eventType === "went_to" ||
+    includesAny(userMessage, dailyLifeTerms)
+  ) {
     return "daily_life";
   }
 
@@ -353,18 +587,16 @@ function isShortAnswer(text: string, candidates: FocusCandidate[]) {
   return !hasConcrete && text.replace(/\s+/g, "").length <= 12;
 }
 
-function hasTalkEvent(text: string) {
-  return /話|電話|おしゃべり|会/.test(text);
-}
-
 function chooseShouldAskQuestion({
   userMessage,
   mode,
+  topCandidate,
   candidates,
   assistantReplies,
 }: {
   userMessage: string;
   mode: ConversationMode;
+  topCandidate: FocusCandidate | null;
   candidates: FocusCandidate[];
   assistantReplies: string[];
 }) {
@@ -380,14 +612,19 @@ function chooseShouldAskQuestion({
     return false;
   }
 
-  const hasPersonFocus = candidates.some((candidate) => candidate.category === "person");
-
-  if (hasPersonFocus && hasTalkEvent(userMessage)) {
+  if (
+    topCandidate?.eventType === "talked_with" ||
+    topCandidate?.eventType === "met"
+  ) {
     return true;
   }
 
-  if (mode === "reminiscence" && candidates.length > 0) {
-    return true;
+  if (
+    topCandidate?.eventType === "ate" ||
+    topCandidate?.eventType === "is_trending" ||
+    topCandidate?.eventType === "remembered"
+  ) {
+    return false;
   }
 
   if (candidates.some(isConcreteCandidate)) {
@@ -399,11 +636,11 @@ function chooseShouldAskQuestion({
 
 function chooseResponseGoal({
   mode,
-  candidates,
+  topCandidate,
   shouldAskQuestion,
 }: {
   mode: ConversationMode;
-  candidates: FocusCandidate[];
+  topCandidate: FocusCandidate | null;
   shouldAskQuestion: boolean;
 }): ResponseGoal {
   if (mode === "safety") {
@@ -414,18 +651,22 @@ function chooseResponseGoal({
     return "continue";
   }
 
-  if (mode === "reminiscence") {
+  if (topCandidate?.eventType === "remembered" || mode === "reminiscence") {
     return "reminisce";
   }
 
   if (
     (mode === "loneliness" || mode === "anxiety") &&
-    !candidates.some(isConcreteCandidate)
+    (!topCandidate || topCandidate.topicType === "feeling")
   ) {
     return "empathize";
   }
 
-  if (candidates.some(isConcreteCandidate)) {
+  if (topCandidate?.eventType === "talked_with" || topCandidate?.eventType === "met") {
+    return "chat";
+  }
+
+  if (topCandidate && topCandidate.topicType !== "feeling") {
     return shouldAskQuestion ? "chat" : "react";
   }
 
@@ -483,23 +724,33 @@ export function analyzeConversationTurn({
     recentAssistantReplies,
   });
   const candidates = extractFocusCandidates(userMessage);
-  const mode = detectMode({ userMessage, recentMessages, safetyResult });
+  const topCandidate = candidates[0] ?? null;
+  const mode = detectMode({
+    userMessage,
+    recentMessages,
+    safetyResult,
+    topCandidate,
+  });
   const shouldAskQuestion = chooseShouldAskQuestion({
     userMessage,
     mode,
+    topCandidate,
     candidates,
     assistantReplies,
   });
-  const mainFocus = candidates[0]?.label ?? null;
+  const mainFocus = topCandidate?.label ?? null;
 
   return {
     safetyLevel: safetyResult,
     mode,
     focusTerms: candidates.map((candidate) => candidate.label).slice(0, 5),
     mainFocus,
+    eventType: topCandidate?.eventType ?? "unknown",
+    relationHint: topCandidate?.relationHint ?? null,
+    topicType: topCandidate?.topicType ?? "unknown",
     responseGoal: chooseResponseGoal({
       mode,
-      candidates,
+      topCandidate,
       shouldAskQuestion,
     }),
     shouldAskQuestion,

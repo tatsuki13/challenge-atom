@@ -18,6 +18,16 @@ const focusReplies: Record<string, ReplySet> = {
       "先生と話せたんですね。どんな話がいちばん弾みました？",
     ],
   },
+  先輩: {
+    chat: [
+      "先輩とおしゃべりされたんですね。気軽に話せる相手がいる時間って、いいものですね。",
+      "先輩とのおしゃべりだったんですね。少し話が弾んだ感じがしますね。",
+    ],
+    ask: [
+      "先輩とおしゃべりされたんですね。何の話で盛り上がったんですか？",
+      "先輩と話せたんですね。どんな話が出たんですか？",
+    ],
+  },
   蔵: {
     chat: [
       "蔵なんですか。面白いですね。昔ながらの雰囲気が、今はかえって新しく見えるのかもしれませんね。",
@@ -96,6 +106,15 @@ const focusReplies: Record<string, ReplySet> = {
     ],
     ask: [
       "電話で話されたんですね。何の話で盛り上がったんですか？",
+    ],
+  },
+  おしゃべり: {
+    chat: [
+      "おしゃべりできたんですね。誰かと話す時間があると、一日の感じが少し変わりますね。",
+      "おしゃべりの時間があったんですね。そういう何気ない会話って、あとから少し残りますね。",
+    ],
+    ask: [
+      "おしゃべりできたんですね。何の話で盛り上がったんですか？",
     ],
   },
   楽しい: {
@@ -225,8 +244,86 @@ function pickReply({
   return candidates[Math.floor(Math.random() * candidates.length)] ?? candidates[0];
 }
 
-function buildGenericFocusReply(focus: string, userMessage: string) {
-  if (userMessage.includes("トレンド") || userMessage.includes("流行")) {
+function buildGenericFocusReply({
+  focus,
+  userMessage,
+  turnPlan,
+}: {
+  focus: string;
+  userMessage: string;
+  turnPlan: ConversationTurnPlan;
+}) {
+  if (turnPlan.eventType === "talked_with" && turnPlan.topicType === "person") {
+    return {
+      chat: [
+        `${focus}とおしゃべりできたんですね。いい時間だったんですね。`,
+        `${focus}と話されたんですね。誰かと話す時間があると、一日の感じが少し変わりますね。`,
+      ],
+      ask: [
+        `${focus}とおしゃべりできたんですね。何の話で盛り上がったんですか？`,
+        `${focus}と話されたんですね。どんな話が出たんですか？`,
+      ],
+    };
+  }
+
+  if (turnPlan.eventType === "met" && turnPlan.topicType === "person") {
+    return {
+      chat: [
+        `${focus}に会えたんですね。顔を合わせて話せる時間って、少し残りますね。`,
+      ],
+      ask: [
+        `${focus}に会えたんですね。どんな話をされたんですか？`,
+      ],
+    };
+  }
+
+  if (turnPlan.eventType === "went_to" && turnPlan.topicType === "place") {
+    return {
+      chat: [
+        `${focus}に行かれたんですね。外に出るだけでも、一日の感じが少し変わりますね。`,
+      ],
+      ask: [
+        `${focus}に行かれたんですね。何か目に留まったものはありました？`,
+      ],
+    };
+  }
+
+  if (turnPlan.eventType === "ate" && turnPlan.topicType === "food") {
+    return {
+      chat: [
+        `${focus}だったんですね。食べ慣れたものでも、その日の楽しみになりますね。`,
+        `${focus}はいいですね。ほっとする味だったのかもしれませんね。`,
+      ],
+      ask: [
+        `${focus}だったんですね。どんな味でした？`,
+      ],
+    };
+  }
+
+  if (turnPlan.eventType === "made") {
+    return {
+      chat: [
+        `${focus}を用意されたんですね。手を動かして何かを作る時間って、少し集中できますね。`,
+      ],
+      ask: [
+        `${focus}を作られたんですね。どんなふうに仕上がりました？`,
+      ],
+    };
+  }
+
+  if (turnPlan.eventType === "remembered") {
+    return {
+      chat: [
+        `${focus}のことを思い出されたんですね。昔の時間が少し戻ってくるような話ですね。`,
+        `${focus}の話、いいですね。その頃の空気まで少し浮かんできそうです。`,
+      ],
+      ask: [
+        `${focus}の話、いいですね。その頃はどんな楽しみがありました？`,
+      ],
+    };
+  }
+
+  if (turnPlan.eventType === "is_trending" || userMessage.includes("トレンド") || userMessage.includes("流行")) {
     return {
       chat: [
         `${focus}が話題なんですね。昔からあるものでも、見方が変わると新しく感じますね。`,
@@ -264,7 +361,11 @@ export function createMockReply({
   const focusReply =
     turnPlan.mainFocus !== null
       ? focusReplies[turnPlan.mainFocus] ??
-        buildGenericFocusReply(turnPlan.mainFocus, userMessage)
+        buildGenericFocusReply({
+          focus: turnPlan.mainFocus,
+          userMessage,
+          turnPlan,
+        })
       : null;
   const fallbackReply = goalReplies[turnPlan.responseGoal] ?? goalReplies.chat;
   const replySet = focusReply ?? fallbackReply;
