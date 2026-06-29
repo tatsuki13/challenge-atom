@@ -65,11 +65,12 @@ export function buildReplyStyleInstruction({
   const style = selectReplyStyle({ mode, recentMessages });
   const recentOpeners = getRecentAssistantOpeners(recentMessages);
   const lines = [
-    "# 今回の返答スタイル",
-    `- 使用する型: ${style}`,
-    `- 方針: ${styleInstructions[style]}`,
-    "- 毎回「そうでしたか。〇〇だったんですね。△△ですか？」の型にしない。",
-    "- 必ず質問で終える必要はありません。",
+    "# 返答スタイルの軽いヒント",
+    `- 候補スタイル: ${style}`,
+    `- 使うなら: ${styleInstructions[style]}`,
+    "- これは固定テンプレートではありません。最後の発話に合う自然な返答を優先してください。",
+    "- 毎回「そうでしたか。〇〇だったんですね。△△ですか？」の型にしないでください。",
+    "- 必ず質問で終える必要はありません。短い一言で自然に終えてもよいです。",
   ];
 
   if (recentOpeners.length > 0) {

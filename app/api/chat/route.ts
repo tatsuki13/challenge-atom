@@ -61,7 +61,18 @@ async function createOpenAIReply({
   }
 
   const client = new OpenAI({ apiKey });
-  const input = buildAiInput({ messages, moodScore, memoryContext, mode });
+  const currentMessage =
+    messages
+      .slice()
+      .reverse()
+      .find((message) => message.role === "user")?.content ?? "";
+  const input = buildAiInput({
+    messages,
+    currentMessage,
+    moodScore,
+    memoryContext,
+    mode,
+  });
 
   const response = await client.responses.create({
     model,

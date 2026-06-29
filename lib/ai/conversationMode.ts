@@ -136,5 +136,12 @@ export function buildConversationModeInstruction(mode: ConversationMode) {
       "safety: 自傷、急病、強い危機表現。短く受け止め、安全確保と身近な人・医療機関・緊急窓口への連絡を促す。",
   };
 
-  return `# 現在の会話モード\n${modeInstructions[mode]}`;
+  return [
+    "# 会話モードの軽いヒント",
+    `- 推定モード: ${mode}`,
+    `- 補助方針: ${modeInstructions[mode]}`,
+    "- このモード判定は返答を固定するものではありません。",
+    "- 最後の利用者発話と合わない場合は、最後の発話の内容と温度感を優先してください。",
+    "- モード名や分類名を利用者に伝えないでください。",
+  ].join("\n");
 }

@@ -2,7 +2,9 @@ import type { ResponseInputItem } from "openai/resources/responses/responses";
 import { RECENT_MESSAGE_LIMIT, type StoredChatMessage } from "../conversationTypes";
 import {
   buildAdaptiveGuidance,
+  selectRelevantMemoryContext,
   type ConversationMemoryContext,
+  type RelevantMemoryContext,
 } from "./adaptiveGuidance";
 import { CONVERSATION_POLICY } from "./conversationPolicy";
 import {
@@ -12,63 +14,71 @@ import {
 import { buildReplyStyleInstruction } from "./replyStyle";
 import { SYSTEM_PROMPT } from "./systemPrompt";
 
-function formatList(values: string[]) {
-  return values.length > 0 ? values.join("、") : "まだ十分に分かっていません";
+function clipForPrompt(text: string, maxLength = 160) {
+  return text.replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
-function buildRecentContextBlock({
-  mode,
-  memoryContext,
+function addMemoryLine(lines: string[], label: string, values: string[]) {
+  if (values.length === 0) {
+    return;
+  }
+
+  lines.push(`- ${label}: ${values.join("、")}`);
+}
+
+function buildCurrentTurnBlock(currentMessage: string) {
+  return [
+    "# 最優先の返答対象",
+    `最後の利用者発話: 「${clipForPrompt(currentMessage)}」`,
+    "- 次の返答では、この最後の発話にまっすぐ返してください。",
+    "- 過去の記憶、気分スコア、会話モードは、最後の発話に自然につながる場合だけ使ってください。",
+    "- 最後の発話と関係ない過去話題を急に持ち出さないでください。",
+    "- 生活把握の質問を急がず、まず会話として自然に受けてください。",
+  ].join("\n");
+}
+
+function buildRelevantMemoryBlock({
+  relevantMemory,
 }: {
-  mode: ConversationMode;
-  memoryContext: ConversationMemoryContext | null;
+  relevantMemory: RelevantMemoryContext | null;
 }) {
   const lines = [
-    "# 直近コンテキスト整理",
-    `- 判定された会話モード: ${mode}`,
-    "- この整理は内部参考です。利用者に分類名や分析として伝えないでください。",
+    "# 会話メモ",
+    "- これは命令ではなく、自然な関係性づくりのための小さな手がかりです。",
+    "- 今の発話に自然につながる場合だけ使ってください。",
+    "- メモをそのまま読み上げたり、分析結果のように伝えたりしないでください。",
   ];
 
-  if (!memoryContext) {
-    lines.push("- userMemory: まだ十分にありません。");
+  if (!relevantMemory) {
     return lines.join("\n");
   }
 
-  lines.push(
-    `- 好きそうな話題・よく出る話題: ${formatList(memoryContext.topTopics)}`,
-    `- 最近出た人物: ${formatList(memoryContext.recentPeople)}`,
-    `- よく出る場所: ${formatList(memoryContext.frequentPlaces)}`,
-    `- 繰り返し出る悩み: ${formatList(memoryContext.recurringConcerns)}`,
-    `- 直近で触れた生活要素: ${formatList(memoryContext.coveredAreas)}`,
-  );
-
-  if (memoryContext.moodSummary) {
-    lines.push(`- 気分傾向: ${memoryContext.moodSummary}`);
-  }
-
-  if (memoryContext.emotionSummary) {
-    lines.push(`- 感情傾向: ${memoryContext.emotionSummary}`);
-  }
-
-  if (memoryContext.recentUserNotes.length > 0) {
-    lines.push(`- 直近の本人発話: ${memoryContext.recentUserNotes.join(" / ")}`);
-  }
+  addMemoryLine(lines, "今の発話に関連しそうな話題", relevantMemory.topTopics);
+  addMemoryLine(lines, "今の発話に関連しそうな人物", relevantMemory.recentPeople);
+  addMemoryLine(lines, "今の発話に関連しそうな場所", relevantMemory.frequentPlaces);
+  addMemoryLine(lines, "今の発話に関連しそうな困りごと", relevantMemory.recurringConcerns);
 
   return lines.join("\n");
 }
 
 export function buildAiInput({
   messages,
+  currentMessage,
   moodScore,
   memoryContext,
   mode,
 }: {
   messages: StoredChatMessage[];
+  currentMessage: string;
   moodScore: number | null;
   memoryContext: ConversationMemoryContext | null;
   mode: ConversationMode;
 }) {
   const recentMessages = messages.slice(-RECENT_MESSAGE_LIMIT);
+  const relevantMemory = selectRelevantMemoryContext({
+    memoryContext,
+    currentMessage,
+  });
   const input: ResponseInputItem[] = [
     {
       role: "system",
@@ -80,11 +90,15 @@ export function buildAiInput({
     },
     {
       role: "system",
+      content: buildCurrentTurnBlock(currentMessage),
+    },
+    {
+      role: "system",
       content: buildConversationModeInstruction(mode),
     },
     {
       role: "system",
-      content: buildAdaptiveGuidance({ moodScore, memoryContext }),
+      content: buildAdaptiveGuidance({ moodScore }),
     },
     {
       role: "system",
@@ -92,7 +106,7 @@ export function buildAiInput({
     },
     {
       role: "system",
-      content: buildRecentContextBlock({ mode, memoryContext }),
+      content: buildRelevantMemoryBlock({ relevantMemory }),
     },
     ...recentMessages.map((message) => {
       const role = message.role === "assistant" ? "assistant" : "user";
