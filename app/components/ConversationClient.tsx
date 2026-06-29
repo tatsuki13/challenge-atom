@@ -25,12 +25,15 @@ type ChatResponse = {
 };
 
 type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  length: number;
   [index: number]: {
     transcript: string;
   };
 };
 
 type SpeechRecognitionEventLike = Event & {
+  resultIndex: number;
   results: {
     length: number;
     [index: number]: SpeechRecognitionResultLike;
@@ -111,6 +114,23 @@ function PetAvatar({ mood }: { mood: "happy" | "worried" | "calm" }) {
   );
 }
 
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+
+  return (
+    target.isContentEditable ||
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    tagName === "button" ||
+    Boolean(target.closest("input, textarea, select, button, a"))
+  );
+}
+
 export default function ConversationClient() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
@@ -127,6 +147,9 @@ export default function ConversationClient() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const speechHoldActiveRef = useRef(false);
+  const transcriptBaseRef = useRef("");
+  const finalTranscriptRef = useRef("");
 
   const refreshMetrics = useCallback(async () => {
     try {
@@ -182,45 +205,127 @@ export default function ConversationClient() {
     window.speechSynthesis.speak(utterance);
   }
 
-  function startListening() {
+  const stopListening = useCallback(() => {
+    speechHoldActiveRef.current = false;
+    recognitionRef.current?.stop();
+  }, []);
+
+  const startListening = useCallback(() => {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-    if (!Recognition || listening) {
+    if (!Recognition || recognitionRef.current) {
       return;
     }
 
+    speechHoldActiveRef.current = true;
+    transcriptBaseRef.current = input.trim();
+    finalTranscriptRef.current = "";
+
     const recognition = new Recognition();
     recognition.lang = "ja-JP";
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.continuous = true;
+    recognition.interimResults = true;
     recognition.onstart = () => {
       setListening(true);
-      setSpeechMessage("聞いています");
+      setSpeechMessage("スペースキーを押している間、聞いています");
     };
     recognition.onend = () => {
+      recognitionRef.current = null;
       setListening(false);
-      setSpeechMessage("");
+      setSpeechMessage(
+        speechHoldActiveRef.current
+          ? "音声入力が止まりました。もう一度スペースキーを押してください。"
+          : "",
+      );
+      speechHoldActiveRef.current = false;
     };
     recognition.onerror = () => {
+      recognitionRef.current = null;
+      speechHoldActiveRef.current = false;
       setListening(false);
       setSpeechMessage("音声を聞き取れませんでした。文字でも入力できます。");
     };
     recognition.onresult = (event) => {
-      let transcript = "";
+      let finalTranscript = "";
+      let interimTranscript = "";
 
-      for (let index = 0; index < event.results.length; index += 1) {
-        transcript += event.results[index][0]?.transcript ?? "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        const transcript = result[0]?.transcript?.trim() ?? "";
+
+        if (!transcript) {
+          continue;
+        }
+
+        if (result.isFinal) {
+          finalTranscript = [finalTranscript, transcript].filter(Boolean).join(" ");
+        } else {
+          interimTranscript = [interimTranscript, transcript]
+            .filter(Boolean)
+            .join(" ");
+        }
       }
 
-      setInput((current) =>
-        [current, transcript.trim()].filter(Boolean).join(" "),
+      if (finalTranscript) {
+        finalTranscriptRef.current = [
+          finalTranscriptRef.current,
+          finalTranscript,
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
+
+      setInput(
+        [
+          transcriptBaseRef.current,
+          finalTranscriptRef.current,
+          interimTranscript,
+        ]
+          .filter(Boolean)
+          .join(" "),
       );
-      textareaRef.current?.focus();
     };
 
     recognitionRef.current = recognition;
     recognition.start();
-  }
+  }, [input]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.code !== "Space" || event.repeat || sending) {
+        return;
+      }
+
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      event.preventDefault();
+      startListening();
+    }
+
+    function handleKeyUp(event: KeyboardEvent) {
+      if (event.code !== "Space") {
+        return;
+      }
+
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      event.preventDefault();
+      stopListening();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      stopListening();
+    };
+  }, [sending, startListening, stopListening]);
 
   async function sendMessage(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
@@ -408,11 +513,19 @@ export default function ConversationClient() {
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <button
                   type="button"
-                  onClick={startListening}
-                  disabled={!speechSupported || listening}
-                  className="min-h-14 rounded-lg bg-[#3b7f6a] px-4 text-xl font-bold text-white transition hover:bg-[#326d5a] disabled:cursor-not-allowed disabled:bg-[#b8c6d6]"
+                  onPointerDown={startListening}
+                  onPointerUp={stopListening}
+                  onPointerCancel={stopListening}
+                  onPointerLeave={stopListening}
+                  disabled={!speechSupported}
+                  aria-pressed={listening}
+                  className={`min-h-14 rounded-lg px-4 text-xl font-bold text-white transition disabled:cursor-not-allowed disabled:bg-[#b8c6d6] ${
+                    listening
+                      ? "bg-[#a04747]"
+                      : "bg-[#3b7f6a] hover:bg-[#326d5a]"
+                  }`}
                 >
-                  {listening ? "聞いています" : "話す"}
+                  {listening ? "聞いています" : "長押しで話す"}
                 </button>
                 <button
                   type="submit"
@@ -501,7 +614,7 @@ export default function ConversationClient() {
                 大切な方針
               </h2>
               <p className="mt-3">
-                カメラ、録音保存、ブラウザへの会話保存は使いません。音声入力は「話す」を押した時だけ使います。
+                カメラ、録音保存、ブラウザへの会話保存は使いません。音声入力はスペースキーまたは「長押しで話す」を押している間だけ使います。
               </p>
               <p className="mt-3">
                 医療診断はしません。体の急な不調や差し迫った危険がある時は、近くの人や緊急窓口に連絡してください。
