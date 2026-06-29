@@ -473,7 +473,7 @@ export default function ConversationClient() {
                       }`}
                     >
                       <p className="mb-1 text-base font-bold">
-                        {isAssistant ? "AI" : "あなた"}
+                        {isAssistant ? "聞き手" : "あなた"}
                       </p>
                       <p>{message.text}</p>
                     </div>
@@ -484,7 +484,7 @@ export default function ConversationClient() {
                 <article className="flex items-start gap-3">
                   <PetAvatar mood="calm" />
                   <div className="rounded-lg border border-[#d5e3dd] bg-[#edf7f2] px-5 py-4 text-xl text-[#1d3a32]">
-                    返事を考えています
+                    今のお話を受け止めています
                   </div>
                 </article>
               ) : null}
