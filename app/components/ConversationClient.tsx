@@ -87,6 +87,14 @@ const initialMessages: ChatMessage[] = [
 
 const topics = [
   "子どものころによく遊んだ場所のこと",
+  "昔の学校や職場で覚えていること",
+  "町内会やご近所の人と話したこと",
+  "家族や友人と最近話したこと",
+  "近所の喫茶店や好きな飲み物のこと",
+  "買い物で目に留まったもの",
+  "散歩で見かけた景色や花のこと",
+  "テレビやニュースで気になったこと",
+  "編み物や手仕事など好きな趣味のこと",
   "最近、少しうれしかったこと",
   "昔よく食べていた好きな料理のこと",
   "今日の体の調子や気分のこと",
@@ -466,8 +474,8 @@ export default function ConversationClient() {
           </Link>
         </header>
 
-        <section className="grid flex-1 gap-5 py-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="flex min-h-[620px] flex-col overflow-hidden rounded-lg border border-[#d7e0ea] bg-white shadow-sm">
+        <section className="grid min-h-0 flex-1 gap-5 py-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="flex h-[calc(100vh-9rem)] min-h-[620px] flex-col overflow-hidden rounded-lg border border-[#d7e0ea] bg-white shadow-sm">
             {speechMessage ? (
               <div className="border-b border-[#e3e9f0] bg-[#fff8f4] px-4 py-3 sm:px-5">
                 <p className="text-lg font-semibold text-[#a04747]">
@@ -476,7 +484,7 @@ export default function ConversationClient() {
               </div>
             ) : null}
 
-            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-5 sm:px-5">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-5 sm:px-5">
               {messages.map((message) => {
                 const isAssistant = message.role === "assistant";
 

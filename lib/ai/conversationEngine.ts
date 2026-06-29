@@ -83,24 +83,36 @@ type PatternRule = {
 
 const focusRules: FocusRule[] = [
   { label: "先生", terms: ["先生", "医者", "医師"], topicType: "person", weight: 86 },
-  { label: "友人", terms: ["友人", "友達", "知り合い"], topicType: "person", weight: 84 },
+  { label: "先輩", terms: ["先輩"], topicType: "person", weight: 85 },
+  { label: "後輩", terms: ["後輩"], topicType: "person", weight: 83 },
+  { label: "友人", terms: ["友人", "友達", "知り合い", "ご近所", "近所の人", "町内会の人"], topicType: "person", weight: 84 },
   { label: "家族", terms: ["家族", "息子", "娘", "孫", "子ども", "子供"], topicType: "person", weight: 82 },
   { label: "夫", terms: ["夫", "主人"], topicType: "person", weight: 82 },
   { label: "妻", terms: ["妻", "家内"], topicType: "person", weight: 82 },
-  { label: "スーパー", terms: ["スーパー"], topicType: "place", weight: 76 },
+  { label: "スーパー", terms: ["スーパー", "商店街", "市場"], topicType: "place", weight: 76 },
+  { label: "喫茶店", terms: ["喫茶店", "カフェ"], topicType: "place", weight: 75 },
   { label: "病院", terms: ["病院", "医院", "診療所"], topicType: "place", weight: 76 },
   { label: "公園", terms: ["公園"], topicType: "place", weight: 74 },
+  { label: "川", terms: ["川"], topicType: "place", weight: 74 },
+  { label: "海", terms: ["海"], topicType: "place", weight: 72 },
+  { label: "山", terms: ["山"], topicType: "place", weight: 72 },
+  { label: "神社", terms: ["神社", "お寺"], topicType: "place", weight: 70 },
   { label: "学校", terms: ["学校", "学生時代"], topicType: "place", weight: 72 },
   { label: "職場", terms: ["職場", "会社"], topicType: "place", weight: 72 },
   { label: "カレー", terms: ["カレー"], topicType: "food", weight: 80 },
   { label: "魚", terms: ["魚"], topicType: "food", weight: 72 },
   { label: "野菜", terms: ["野菜"], topicType: "food", weight: 72 },
   { label: "弁当", terms: ["弁当", "お弁当"], topicType: "food", weight: 72 },
+  { label: "モーニング", terms: ["モーニング", "朝ごはん", "朝食"], topicType: "food", weight: 73 },
+  { label: "お茶", terms: ["お茶", "コーヒー", "紅茶"], topicType: "food", weight: 68 },
   { label: "ハウジング", terms: ["ハウジング"], topicType: "activity", weight: 78 },
   { label: "畑", terms: ["畑"], topicType: "activity", weight: 80 },
   { label: "散歩", terms: ["散歩"], topicType: "activity", weight: 72 },
   { label: "テレビ", terms: ["テレビ"], topicType: "activity", weight: 66 },
   { label: "買い物", terms: ["買い物"], topicType: "activity", weight: 70 },
+  { label: "編み物", terms: ["編み物", "手芸", "裁縫", "手仕事"], topicType: "activity", weight: 74 },
+  { label: "町内会", terms: ["町内会", "自治会"], topicType: "activity", weight: 70 },
+  { label: "ニュース", terms: ["ニュース", "新聞"], topicType: "object", weight: 67 },
   { label: "蔵", terms: ["蔵"], topicType: "object", weight: 82 },
   { label: "花", terms: ["花", "桜"], topicType: "object", weight: 72 },
   { label: "写真", terms: ["写真"], topicType: "object", weight: 72 },
@@ -112,6 +124,42 @@ const focusRules: FocusRule[] = [
 ];
 
 const patternRules: PatternRule[] = [
+  {
+    eventType: "heard_about",
+    topicType: "activity",
+    relationHint: "今日の話題",
+    score: 345,
+    patterns: [
+      /今日の話題[:：]\s*(.{1,40})/,
+    ],
+  },
+  {
+    eventType: "remembered",
+    topicType: "place",
+    relationHint: "昔遊んだ場所",
+    score: 338,
+    patterns: [
+      /(?:昔は|若い頃は|子どものころは|子供のころは)(.{1,24}?)(?:で|に)(?:よく)?(?:遊んでいた|遊んでいました|遊んだ|遊びました)/,
+    ],
+  },
+  {
+    eventType: "heard_about",
+    topicType: "activity",
+    relationHint: "盛り上がった話題",
+    score: 336,
+    patterns: [
+      /(.{1,28}?)(?:の話で|について)(?:盛り上がった|盛り上がりました|話が弾んだ|話がはずんだ)/,
+    ],
+  },
+  {
+    eventType: "ate",
+    topicType: "food",
+    relationHint: "食べたもの",
+    score: 334,
+    patterns: [
+      /(?:.+?で)?([^でを、。]{1,24})(?:を)?(?:食べた|食べました)/,
+    ],
+  },
   {
     eventType: "is_trending",
     topicType: "object",
@@ -244,7 +292,9 @@ const weakFocusStopWords = new Set([
   "たくさん",
   "なんか",
   "だいぶ",
+  "全然",
   "やはり",
+  "話題",
 ]);
 const leadingNoise = [
   "今日は",
@@ -261,9 +311,12 @@ const leadingNoise = [
   "若いころは",
   "ちょっと",
   "たくさん",
+  "全然",
+  "だいぶ",
+  "やはり",
 ];
 const trailingNoisePattern =
-  /(について|の話|のこと|を|に|へ|まで|と|が|は|も|で|から|です|でした|だった|だ|らしい|みたい|していた|してた)$/;
+  /(について|の話|のこと|を|に|へ|まで|が|は|も|で|から|です|でした|だった|だ|らしい|みたい|していた|してた)$/;
 
 const reminiscenceTerms = [
   "昔",
@@ -342,6 +395,11 @@ function normalizeFocus(raw: string) {
   }
 
   text = text.replace(/[「」『』"'.、。！？!?]/g, "").replace(/\s+/g, "").trim();
+  text = text
+    .replace(/で気になったこと$/, "")
+    .replace(/が気になったこと$/, "")
+    .replace(/のこと$/, "")
+    .trim();
 
   for (const noise of leadingNoise) {
     if (text.startsWith(noise)) {
@@ -783,7 +841,7 @@ function chooseShouldAskQuestion({
     return false;
   }
 
-  if (hasRecentQuestion(assistantReplies) || hasTwoRecentQuestions(assistantReplies)) {
+  if (hasTwoRecentQuestions(assistantReplies)) {
     return false;
   }
 
@@ -791,23 +849,28 @@ function chooseShouldAskQuestion({
     return false;
   }
 
+  const hasConcreteFocus = topCandidate !== null && isConcreteCandidate(topCandidate);
+  const previousWasQuestion = hasRecentQuestion(assistantReplies);
+
+  if (
+    previousWasQuestion &&
+    (!hasConcreteFocus || topCandidate?.topicType === "feeling")
+  ) {
+    return false;
+  }
+
   if (
     topCandidate?.eventType === "talked_with" ||
-    topCandidate?.eventType === "met"
+    topCandidate?.eventType === "met" ||
+    topCandidate?.eventType === "heard_about" ||
+    topCandidate?.eventType === "saw" ||
+    topCandidate?.eventType === "made"
   ) {
     return true;
   }
 
-  if (
-    topCandidate?.eventType === "ate" ||
-    topCandidate?.eventType === "is_trending" ||
-    topCandidate?.eventType === "remembered"
-  ) {
-    return false;
-  }
-
-  if (candidates.some(isConcreteCandidate)) {
-    return false;
+  if (hasConcreteFocus) {
+    return true;
   }
 
   return mode === "anxiety" || mode === "loneliness";
