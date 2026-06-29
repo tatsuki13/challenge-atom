@@ -54,7 +54,7 @@ export type ConversationTurnPlan = {
   avoidPatterns: string[];
 };
 
-type CandidateSource = "pattern" | "proper_noun" | "dictionary";
+type CandidateSource = "pattern" | "proper_noun" | "dictionary" | "inferred";
 
 type FocusRule = {
   label: string;
@@ -218,6 +218,34 @@ const patternRules: PatternRule[] = [
 ];
 
 const katakanaStopWords = new Set(["テレビ", "スーパー", "カレー"]);
+const weakFocusStopWords = new Set([
+  "今日",
+  "今日は",
+  "昨日",
+  "昨日は",
+  "最近",
+  "最近は",
+  "この前",
+  "この前は",
+  "私",
+  "わたし",
+  "自分",
+  "こと",
+  "もの",
+  "ところ",
+  "感じ",
+  "話",
+  "会話",
+  "内容",
+  "時間",
+  "一日",
+  "少し",
+  "ちょっと",
+  "たくさん",
+  "なんか",
+  "だいぶ",
+  "やはり",
+]);
 const leadingNoise = [
   "今日は",
   "今日",
@@ -350,12 +378,70 @@ function knownTopicType(label: string): TopicType | null {
   return rule?.topicType ?? null;
 }
 
+function inferTopicType(label: string, text: string): TopicType {
+  const known = knownTopicType(label);
+
+  if (known) {
+    return known;
+  }
+
+  if (
+    /(さん|先生|先輩|後輩|友達|友人|家族|母|父|兄|姉|弟|妹|孫|息子|娘|同僚|近所の人|町内会の人|職員|店員|医師|医者)$/.test(
+      label,
+    )
+  ) {
+    return "person";
+  }
+
+  if (/(駅|店|病院|公園|学校|家|施設|会館|商店街|図書館|役所|職場|会社|庭|寺|神社|市場|会場)$/.test(label)) {
+    return "place";
+  }
+
+  if (/(料理|ご飯|飯|弁当|寿司|ラーメン|そば|蕎麦|パン|魚|肉|野菜|果物|お茶|コーヒー|菓子|味)$/.test(label)) {
+    return "food";
+  }
+
+  if (/(会|祭り|講座|趣味|ゲーム|音楽|散歩|買い物|旅行|読書|将棋|囲碁|俳句|カラオケ|運動|体操)$/.test(label)) {
+    return "activity";
+  }
+
+  if (/(寂しい|さびしい|不安|心配|楽しい|うれしい|嬉しい|疲れた|怖い|こわい)/.test(label)) {
+    return "feeling";
+  }
+
+  if (/(話した|聞いた|見た|読んだ|調べた|考えた|気になった)/.test(text)) {
+    return "object";
+  }
+
+  return "object";
+}
+
 function topicTypeForPattern(label: string, fallback: TopicType) {
   if (fallback === "memory" || fallback === "person") {
     return fallback;
   }
 
   return knownTopicType(label) ?? fallback;
+}
+
+function eventTypeForInferredTopic(text: string): EventType {
+  if (/話した|話してた|聞いた|聞きました|言われた|読んだ|調べた/.test(text)) {
+    return "heard_about";
+  }
+
+  if (/見た|見ました|見かけた/.test(text)) {
+    return "saw";
+  }
+
+  if (/作った|作りました|買った|買いました/.test(text)) {
+    return "made";
+  }
+
+  if (/流行|トレンド|人気/.test(text)) {
+    return "is_trending";
+  }
+
+  return "unknown";
 }
 
 function mergeCandidate(
@@ -442,6 +528,96 @@ function extractKatakanaCandidates(text: string, candidates: Map<string, FocusCa
   }
 }
 
+function extractQuotedCandidates(text: string, candidates: Map<string, FocusCandidate>) {
+  const matches = text.matchAll(/[「『"]([^」』"]{1,32})[」』"]/g);
+
+  for (const match of matches) {
+    const rawLabel = match[1];
+    const label = normalizeFocus(rawLabel);
+
+    if (!isUsableFocus(label)) {
+      continue;
+    }
+
+    mergeCandidate(candidates, {
+      label,
+      eventType: eventTypeForInferredTopic(text),
+      relationHint: "引用された話題",
+      topicType: inferTopicType(label, text),
+      index: match.index ?? text.indexOf(rawLabel),
+      score: 235,
+      source: "inferred",
+    });
+  }
+}
+
+function extractTopicMarkerCandidates(text: string, candidates: Map<string, FocusCandidate>) {
+  const markerPatterns = [
+    /(.{1,32}?)(?:について|のことで|の件で|の話題で)(?:考えた|考えていた|気になった|調べた|読んだ|見た|聞いた|話した|話してた|盛り上がった|でした|だった|です)?/,
+    /(.{1,28}?)(?:を|に)(?:考えた|考えていた|調べた|読んだ|聞いた|見た)/,
+    /(.{1,28}?)(?:が|は)(?:面白かった|おもしろかった|気になった|不思議だった|変だった|珍しかった|すごかった|新しかった|よかった|良かった)/,
+    /(.{2,24}?)(?:でした|だった|だよ|だね|です)$/,
+  ];
+
+  for (const pattern of markerPatterns) {
+    const match = pattern.exec(text);
+    const rawFocus = match?.[1];
+
+    if (!rawFocus) {
+      continue;
+    }
+
+    const label = normalizeFocus(rawFocus);
+
+    if (!isUsableFocus(label) || weakFocusStopWords.has(label)) {
+      continue;
+    }
+
+    mergeCandidate(candidates, {
+      label,
+      eventType: eventTypeForInferredTopic(text),
+      relationHint: "発話から推定した話題",
+      topicType: inferTopicType(label, text),
+      index: match.index + match[0].indexOf(rawFocus),
+      score: 220,
+      source: "inferred",
+    });
+  }
+}
+
+function extractLooseNounCandidates(text: string, candidates: Map<string, FocusCandidate>) {
+  const matches = text.matchAll(/[一-龠々ァ-ヶーA-Za-z0-9]{2,24}/g);
+
+  for (const match of matches) {
+    const rawLabel = match[0];
+    const label = normalizeFocus(rawLabel);
+
+    if (
+      !isUsableFocus(label) ||
+      weakFocusStopWords.has(label) ||
+      candidates.has(label)
+    ) {
+      continue;
+    }
+
+    const hasConcreteShape = /[一-龠々ァ-ヶーA-Za-z0-9]/.test(label);
+
+    if (!hasConcreteShape) {
+      continue;
+    }
+
+    mergeCandidate(candidates, {
+      label,
+      eventType: eventTypeForInferredTopic(text),
+      relationHint: "発話内の具体語",
+      topicType: inferTopicType(label, text),
+      index: match.index ?? text.indexOf(rawLabel),
+      score: 142,
+      source: "inferred",
+    });
+  }
+}
+
 function boostContext(candidate: FocusCandidate, text: string) {
   let score = candidate.score;
   const escaped = escapeRegExp(candidate.label);
@@ -469,8 +645,11 @@ function extractFocusCandidates(text: string) {
   const candidates = new Map<string, FocusCandidate>();
 
   extractPatternCandidates(text, candidates);
+  extractQuotedCandidates(text, candidates);
+  extractTopicMarkerCandidates(text, candidates);
   extractKatakanaCandidates(text, candidates);
   extractDictionaryCandidates(text, candidates);
+  extractLooseNounCandidates(text, candidates);
 
   return [...candidates.values()]
     .map((candidate) => boostContext(candidate, text))
