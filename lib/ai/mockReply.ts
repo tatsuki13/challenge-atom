@@ -426,6 +426,14 @@ export function createMockReply({
     return `それでは今回は「${topicTitle}」でお話ししましょう。まず、そのことでぱっと思い浮かぶことはありますか？`;
   }
 
+  if (turnPlan.shouldAskQuestion && turnPlan.suggestedQuestion) {
+    const opener = turnPlan.mainFocus
+      ? `${turnPlan.mainFocus}の話なんですね。`
+      : "";
+
+    return `${opener}${turnPlan.suggestedQuestion}`;
+  }
+
   const focusReply =
     turnPlan.mainFocus !== null
       ? focusReplies[turnPlan.mainFocus] ??

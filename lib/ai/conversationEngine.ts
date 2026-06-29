@@ -51,6 +51,7 @@ export type ConversationTurnPlan = {
   topicType: TopicType;
   responseGoal: ResponseGoal;
   shouldAskQuestion: boolean;
+  suggestedQuestion?: string | null;
   avoidPatterns: string[];
 };
 
@@ -996,6 +997,7 @@ export function analyzeConversationTurn({
       shouldAskQuestion,
     }),
     shouldAskQuestion,
+    suggestedQuestion: null,
     avoidPatterns: buildAvoidPatterns({
       mainFocus,
       shouldAskQuestion,

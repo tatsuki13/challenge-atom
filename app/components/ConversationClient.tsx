@@ -19,6 +19,7 @@ type ChatMessage = {
 
 type ConversationDebug = {
   usedMock: boolean;
+  planSource?: string;
   mode: string;
   mainFocus: string | null;
   focusTerms: string[];
@@ -26,6 +27,7 @@ type ConversationDebug = {
   topicType: string;
   responseGoal: string;
   shouldAskQuestion: boolean;
+  suggestedQuestion?: string | null;
   topicStarter: boolean;
 };
 
@@ -511,7 +513,8 @@ export default function ConversationClient() {
                       <p>{message.text}</p>
                       {message.debug ? (
                         <p className="mt-3 border-t border-[#bfd7cc] pt-2 text-sm leading-6 text-[#4d6a60]">
-                          制御: {message.debug.usedMock ? "mock" : "OpenAI"} / focus:{" "}
+                          制御: {message.debug.usedMock ? "mock" : "OpenAI"} / plan:{" "}
+                          {message.debug.planSource ?? "local"} / focus:{" "}
                           {message.debug.mainFocus ?? "なし"} / event:{" "}
                           {message.debug.eventType} / topic:{" "}
                           {message.debug.topicType}
@@ -663,6 +666,12 @@ export default function ConversationClient() {
                     </dd>
                   </div>
                   <div>
+                    <dt className="inline font-bold">解析</dt>
+                    <dd className="inline">
+                      : {latestDebug.planSource ?? "local"}
+                    </dd>
+                  </div>
+                  <div>
                     <dt className="inline font-bold">focus</dt>
                     <dd className="inline">
                       : {latestDebug.mainFocus ?? "なし"}
@@ -682,6 +691,14 @@ export default function ConversationClient() {
                       : {latestDebug.shouldAskQuestion ? "yes" : "no"}
                     </dd>
                   </div>
+                  {latestDebug.suggestedQuestion ? (
+                    <div>
+                      <dt className="inline font-bold">ask</dt>
+                      <dd className="inline">
+                        : {latestDebug.suggestedQuestion}
+                      </dd>
+                    </div>
+                  ) : null}
                 </dl>
               </section>
             ) : null}
