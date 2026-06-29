@@ -135,7 +135,7 @@ export default function ConversationClient() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [conversationId, setConversationId] = useState<string>();
-  const [moodScore, setMoodScore] = useState(3);
+  const [moodScore, setMoodScore] = useState<number | null>(null);
   const [speechEnabled, setSpeechEnabled] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [speechMessage, setSpeechMessage] = useState("");

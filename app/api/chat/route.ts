@@ -1,18 +1,20 @@
 import OpenAI from "openai";
-import type { ResponseInputItem } from "openai/resources/responses/responses";
+import { buildAiInput } from "@/lib/ai/buildAiInput";
+import { detectConversationMode } from "@/lib/ai/conversationMode";
 import { createMockReply } from "@/lib/ai/mockReply";
-import { SYSTEM_PROMPT } from "@/lib/ai/systemPrompt";
 import { estimateEmotion } from "@/lib/emotion";
 import {
+  getConversationMemoryContext,
   recordAssistantMessage,
   recordUserMessage,
 } from "@/lib/conversationStore";
 import {
-  RECENT_MESSAGE_LIMIT,
   type RiskLevel,
   type StoredChatMessage,
 } from "@/lib/conversationTypes";
 import { detectRisk } from "@/lib/safety";
+import type { ConversationMemoryContext } from "@/lib/ai/adaptiveGuidance";
+import type { ConversationMode } from "@/lib/ai/conversationMode";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,7 +42,17 @@ function normalizeMoodScore(value: unknown) {
   return value >= 1 && value <= 5 ? value : null;
 }
 
-async function createOpenAIReply(messages: StoredChatMessage[]) {
+async function createOpenAIReply({
+  messages,
+  moodScore,
+  memoryContext,
+  mode,
+}: {
+  messages: StoredChatMessage[];
+  moodScore: number | null;
+  memoryContext: ConversationMemoryContext | null;
+  mode: ConversationMode;
+}) {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL;
 
@@ -49,20 +61,7 @@ async function createOpenAIReply(messages: StoredChatMessage[]) {
   }
 
   const client = new OpenAI({ apiKey });
-  const input: ResponseInputItem[] = [
-    {
-      role: "system",
-      content: SYSTEM_PROMPT,
-    },
-    ...messages.slice(-RECENT_MESSAGE_LIMIT).map((message) => {
-      const role = message.role === "assistant" ? "assistant" : "user";
-
-      return {
-        role,
-        content: message.content,
-      } satisfies ResponseInputItem;
-    }),
-  ];
+  const input = buildAiInput({ messages, moodScore, memoryContext, mode });
 
   const response = await client.responses.create({
     model,
@@ -114,13 +113,26 @@ export async function POST(request: Request) {
     emotionLabel,
     riskLevel,
   });
+  const memoryContext = await getConversationMemoryContext({
+    storageMode: savedUserMessage.storageMode,
+  });
+  const conversationMode = detectConversationMode({
+    message,
+    riskLevel,
+    recentMessages: savedUserMessage.recentMessages,
+  });
 
   let reply: string | null = null;
   let usedMock = true;
 
   if (riskLevel !== "urgent") {
     try {
-      reply = await createOpenAIReply(savedUserMessage.recentMessages);
+      reply = await createOpenAIReply({
+        messages: savedUserMessage.recentMessages,
+        moodScore,
+        memoryContext,
+        mode: conversationMode,
+      });
       usedMock = reply === null;
     } catch {
       console.warn("OpenAI response failed; using mock reply.");
@@ -129,7 +141,14 @@ export async function POST(request: Request) {
     }
   }
 
-  reply ??= createMockReply({ emotionLabel, riskLevel });
+  reply ??= createMockReply({
+    message,
+    emotionLabel,
+    riskLevel,
+    moodScore,
+    mode: conversationMode,
+    recentMessages: savedUserMessage.recentMessages,
+  });
 
   await recordAssistantMessage({
     conversationId: savedUserMessage.conversationId,
