@@ -143,7 +143,6 @@ export default function ConversationClient() {
   const [sending, setSending] = useState(false);
   const [topicIndex, setTopicIndex] = useState(0);
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
-  const [lastApiMode, setLastApiMode] = useState<"mock" | "openai">("mock");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -160,7 +159,6 @@ export default function ConversationClient() {
 
       const data = (await response.json()) as MetricsSummary;
       setMetrics(data);
-      setLastApiMode(data.aiMode);
     } catch {
       setMetrics(null);
     }
@@ -384,7 +382,6 @@ export default function ConversationClient() {
 
       setConversationId(data.conversationId);
       setMessages((current) => [...current, assistantMessage]);
-      setLastApiMode(data.usedMock ? "mock" : "openai");
       speak(data.reply);
       void refreshMetrics();
     } catch {
@@ -408,15 +405,6 @@ export default function ConversationClient() {
     textareaRef.current?.focus();
   }
 
-  const demoNotice =
-    metrics?.storageMode === "database"
-      ? "DATABASE_URLが設定されているため、会話履歴をDBに保存します。"
-      : "現在はデモモードです。APIキーとDATABASE_URLを設定すると保存できます。";
-  const aiNotice =
-    lastApiMode === "openai"
-      ? "OPENAI_MODELの設定で実API応答を使っています。"
-      : "APIキーまたはモデル未設定のため、モック応答で確認できます。";
-
   return (
     <main className="min-h-screen bg-[#f6f8fb] text-[#1d2733]">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-4 sm:px-6 lg:px-8">
@@ -439,17 +427,13 @@ export default function ConversationClient() {
 
         <section className="grid flex-1 gap-5 py-5 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="flex min-h-[620px] flex-col overflow-hidden rounded-lg border border-[#d7e0ea] bg-white shadow-sm">
-            <div className="border-b border-[#e3e9f0] bg-[#fdfefe] px-4 py-3 sm:px-5">
-              <div className="grid gap-2 text-base text-[#405163] sm:grid-cols-2">
-                <p>{demoNotice}</p>
-                <p>{aiNotice}</p>
-              </div>
-              {speechMessage ? (
-                <p className="mt-2 text-lg font-semibold text-[#a04747]">
+            {speechMessage ? (
+              <div className="border-b border-[#e3e9f0] bg-[#fff8f4] px-4 py-3 sm:px-5">
+                <p className="text-lg font-semibold text-[#a04747]">
                   {speechMessage}
                 </p>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
 
             <div className="flex-1 space-y-4 overflow-y-auto px-4 py-5 sm:px-5">
               {messages.map((message) => {
