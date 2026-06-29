@@ -1,10 +1,8 @@
 import OpenAI from "openai";
 import { buildAiInput } from "@/lib/ai/buildAiInput";
-import { planConversationReply } from "@/lib/ai/conversationPlanner";
 import { createMockReply } from "@/lib/ai/mockReply";
 import { estimateEmotion } from "@/lib/emotion";
 import {
-  getConversationMemoryContext,
   recordAssistantMessage,
   recordUserMessage,
 } from "@/lib/conversationStore";
@@ -13,8 +11,6 @@ import {
   type StoredChatMessage,
 } from "@/lib/conversationTypes";
 import { detectRisk } from "@/lib/safety";
-import type { ConversationMemoryContext } from "@/lib/ai/adaptiveGuidance";
-import type { ConversationPlan } from "@/lib/ai/conversationPlanner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,14 +40,8 @@ function normalizeMoodScore(value: unknown) {
 
 async function createOpenAIReply({
   messages,
-  moodScore,
-  memoryContext,
-  plan,
 }: {
   messages: StoredChatMessage[];
-  moodScore: number | null;
-  memoryContext: ConversationMemoryContext | null;
-  plan: ConversationPlan;
 }) {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL;
@@ -61,18 +51,7 @@ async function createOpenAIReply({
   }
 
   const client = new OpenAI({ apiKey });
-  const currentMessage =
-    messages
-      .slice()
-      .reverse()
-      .find((message) => message.role === "user")?.content ?? "";
-  const input = buildAiInput({
-    messages,
-    currentMessage,
-    moodScore,
-    memoryContext,
-    plan,
-  });
+  const input = buildAiInput({ messages });
 
   const response = await client.responses.create({
     model,
@@ -124,14 +103,6 @@ export async function POST(request: Request) {
     emotionLabel,
     riskLevel,
   });
-  const memoryContext = await getConversationMemoryContext({
-    storageMode: savedUserMessage.storageMode,
-  });
-  const conversationPlan = planConversationReply({
-    message,
-    riskLevel,
-    recentMessages: savedUserMessage.recentMessages,
-  });
 
   let reply: string | null = null;
   let usedMock = true;
@@ -140,9 +111,6 @@ export async function POST(request: Request) {
     try {
       reply = await createOpenAIReply({
         messages: savedUserMessage.recentMessages,
-        moodScore,
-        memoryContext,
-        plan: conversationPlan,
       });
       usedMock = reply === null;
     } catch {
@@ -156,7 +124,6 @@ export async function POST(request: Request) {
     message,
     emotionLabel,
     riskLevel,
-    plan: conversationPlan,
     recentMessages: savedUserMessage.recentMessages,
   });
 
