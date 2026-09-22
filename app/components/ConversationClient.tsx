@@ -4,6 +4,9 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import type {
   EmotionLabel,
+  MemoryCategory,
+  MemoryExtractionResult,
+  MessageInputType,
   MetricsSummary,
   RiskLevel,
 } from "@/lib/conversationTypes";
@@ -20,15 +23,23 @@ type ChatMessage = {
 type ConversationDebug = {
   usedMock: boolean;
   planSource?: string;
+  generationSource: string;
+  listeningStrategy: string | null;
   mode: string;
   mainFocus: string | null;
   focusTerms: string[];
   eventType: string;
   topicType: string;
-  responseGoal: string;
   shouldAskQuestion: boolean;
   suggestedQuestion?: string | null;
   topicStarter: boolean;
+  memoryExtraction: {
+    status: MemoryExtractionResult["status"];
+    candidateCount: number;
+    categories: MemoryCategory[];
+    rejectedCount: number;
+    rejectionReasonCodes: string[];
+  };
 };
 
 type ChatResponse = {
@@ -37,6 +48,14 @@ type ChatResponse = {
   emotionLabel: EmotionLabel;
   riskLevel: RiskLevel;
   usedMock: boolean;
+  userMessageId: string;
+  assistantMessageId: string;
+  decisionId: string;
+  listeningStrategy: string | null;
+  sourceUtteranceIds: string[];
+  planSource: string;
+  generationSource: string;
+  memoryExtraction: MemoryExtractionResult;
   debug?: ConversationDebug;
 };
 
@@ -158,6 +177,7 @@ function isEditableTarget(target: EventTarget | null) {
 export default function ConversationClient() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
+  const [inputType, setInputType] = useState<MessageInputType>("text");
   const [conversationId, setConversationId] = useState<string>();
   const [moodScore, setMoodScore] = useState<number | null>(null);
   const [speechEnabled, setSpeechEnabled] = useState(false);
@@ -307,6 +327,7 @@ export default function ConversationClient() {
           .filter(Boolean)
           .join(" "),
       );
+      setInputType("speech");
     };
 
     recognitionRef.current = recognition;
@@ -355,18 +376,23 @@ export default function ConversationClient() {
     displayText = text,
     topicStarter = false,
     topicTitle = null,
+    inputType: messageInputType,
+    rawContent = text,
   }: {
     text: string;
     displayText?: string;
     topicStarter?: boolean;
     topicTitle?: string | null;
+    inputType: MessageInputType;
+    rawContent?: string;
   }) {
     if (!text || sending) {
       return;
     }
 
+    const clientMessageId = createClientId();
     const userMessage: ChatMessage = {
-      id: createClientId(),
+      id: clientMessageId,
       role: "user",
       text: displayText,
       riskLevel: "none",
@@ -374,6 +400,7 @@ export default function ConversationClient() {
 
     setMessages((current) => [...current, userMessage]);
     setInput("");
+    setInputType("text");
     setSending(true);
 
     try {
@@ -389,6 +416,9 @@ export default function ConversationClient() {
           speechEnabled,
           topicStarter,
           topicTitle,
+          rawContent,
+          inputType: messageInputType,
+          clientMessageId,
         }),
         cache: "no-store",
       });
@@ -437,7 +467,11 @@ export default function ConversationClient() {
   async function sendMessage(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
 
-    await submitMessage({ text: input.trim() });
+    await submitMessage({
+      text: input.trim(),
+      rawContent: input,
+      inputType,
+    });
   }
 
   async function chooseTopic() {
@@ -453,6 +487,7 @@ export default function ConversationClient() {
       displayText: `今日の話題: ${nextTopic}`,
       topicStarter: true,
       topicTitle: nextTopic,
+      inputType: "topic_starter",
     });
   }
 
@@ -468,12 +503,20 @@ export default function ConversationClient() {
               そばにいる会話AI
             </h1>
           </div>
-          <Link
-            href="/dashboard"
-            className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#b8c6d6] bg-white px-5 text-lg font-semibold text-[#1d2733] shadow-sm transition hover:bg-[#edf4f1]"
-          >
-            今日の記録を見る
-          </Link>
+          <nav className="flex flex-col gap-3 sm:flex-row" aria-label="主なページ">
+            <Link
+              href="/memory"
+              className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#8eb5a6] bg-[#edf7f2] px-5 text-lg font-semibold text-[#285747] shadow-sm transition hover:bg-[#dcefe7]"
+            >
+              記憶を確認する
+            </Link>
+            <Link
+              href="/dashboard"
+              className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#b8c6d6] bg-white px-5 text-lg font-semibold text-[#1d2733] shadow-sm transition hover:bg-[#edf4f1]"
+            >
+              今日の記録を見る
+            </Link>
+          </nav>
         </header>
 
         <section className="grid min-h-0 flex-1 gap-5 py-5 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -517,7 +560,15 @@ export default function ConversationClient() {
                           {message.debug.planSource ?? "local"} / focus:{" "}
                           {message.debug.mainFocus ?? "なし"} / event:{" "}
                           {message.debug.eventType} / topic:{" "}
-                          {message.debug.topicType}
+                          {message.debug.topicType} / strategy:{" "}
+                          {message.debug.listeningStrategy ?? "safety"} / generation:{" "}
+                          {message.debug.generationSource}
+                          <br />
+                          記憶候補: {message.debug.memoryExtraction.status} / 件数:{" "}
+                          {message.debug.memoryExtraction.candidateCount} / category:{" "}
+                          {message.debug.memoryExtraction.categories.join(", ") || "なし"} / 除外:{" "}
+                          {message.debug.memoryExtraction.rejectedCount} / reason:{" "}
+                          {message.debug.memoryExtraction.rejectionReasonCodes.join(", ") || "なし"}
                         </p>
                       ) : null}
                     </div>
@@ -549,7 +600,10 @@ export default function ConversationClient() {
                 ref={textareaRef}
                 id="message"
                 value={input}
-                onChange={(event) => setInput(event.target.value)}
+                onChange={(event) => {
+                  setInput(event.target.value);
+                  setInputType("text");
+                }}
                 className="min-h-32 w-full resize-none rounded-lg border border-[#b8c6d6] bg-white p-4 text-2xl leading-9 outline-none transition focus:border-[#2f7c68] focus:ring-4 focus:ring-[#cfe8df]"
                 placeholder="ここに入力してください"
                 maxLength={1000}
@@ -670,6 +724,16 @@ export default function ConversationClient() {
                     <dd className="inline">
                       : {latestDebug.planSource ?? "local"}
                     </dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-bold">戦略</dt>
+                    <dd className="inline">
+                      : {latestDebug.listeningStrategy ?? "safety"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-bold">生成元</dt>
+                    <dd className="inline">: {latestDebug.generationSource}</dd>
                   </div>
                   <div>
                     <dt className="inline font-bold">focus</dt>

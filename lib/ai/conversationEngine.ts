@@ -1,4 +1,8 @@
-import type { RiskLevel, StoredChatMessage } from "../conversationTypes";
+import type {
+  ListeningStrategy,
+  RiskLevel,
+  StoredChatMessage,
+} from "../conversationTypes";
 
 export type ConversationMode =
   | "casual"
@@ -32,15 +36,6 @@ export type TopicType =
   | "feeling"
   | "unknown";
 
-export type ResponseGoal =
-  | "react"
-  | "chat"
-  | "continue"
-  | "ask"
-  | "reminisce"
-  | "empathize"
-  | "safety";
-
 export type ConversationTurnPlan = {
   safetyLevel: RiskLevel;
   mode: ConversationMode;
@@ -49,7 +44,7 @@ export type ConversationTurnPlan = {
   eventType: EventType;
   relationHint: string | null;
   topicType: TopicType;
-  responseGoal: ResponseGoal;
+  listeningStrategy: ListeningStrategy;
   shouldAskQuestion: boolean;
   suggestedQuestion?: string | null;
   avoidPatterns: string[];
@@ -371,6 +366,27 @@ const genericQuestionPatterns = [
   "誰と話しましたか？",
   "今日はどんな一日でしたか？",
 ];
+
+const noAnswerTerms = [
+  "分からない",
+  "わからない",
+  "分かりません",
+  "わかりません",
+  "特にない",
+  "別にない",
+  "何もない",
+  "思いつかない",
+];
+
+const topicChangeTerms = [
+  "別の話",
+  "ほかの話",
+  "他の話",
+  "話題を変え",
+  "話を変え",
+];
+
+const ambiguousReferencePattern = /(?:それ|これ|あれ|その人|あの人|そこ|あそこ|あのこと)/;
 
 function includesAny(text: string, terms: string[]) {
   return terms.some((term) => text.includes(term));
@@ -736,18 +752,18 @@ function getAssistantReplies({
     .map((message) => message.content);
 }
 
-function endsWithQuestion(text: string) {
-  return /[？?]\s*$/.test(text.trim());
+function containsQuestion(text: string) {
+  return /[？?]/.test(text);
 }
 
 function hasRecentQuestion(assistantReplies: string[]) {
-  return assistantReplies.slice(-1).some(endsWithQuestion);
+  return assistantReplies.slice(-1).some(containsQuestion);
 }
 
 function hasTwoRecentQuestions(assistantReplies: string[]) {
   const recent = assistantReplies.slice(-2);
 
-  return recent.length === 2 && recent.every(endsWithQuestion);
+  return recent.length === 2 && recent.every(containsQuestion);
 }
 
 function looksLikeContinuation(text: string, recentMessages: StoredChatMessage[]) {
@@ -825,6 +841,18 @@ function isShortAnswer(text: string, candidates: FocusCandidate[]) {
   return !hasConcrete && text.replace(/\s+/g, "").length <= 12;
 }
 
+export function isNoAnswer(text: string) {
+  return includesAny(text, noAnswerTerms);
+}
+
+function requestsTopicChange(text: string) {
+  return includesAny(text, topicChangeTerms);
+}
+
+function needsClarification(text: string, topCandidate: FocusCandidate | null) {
+  return topCandidate === null && ambiguousReferencePattern.test(text);
+}
+
 function chooseShouldAskQuestion({
   userMessage,
   mode,
@@ -877,43 +905,98 @@ function chooseShouldAskQuestion({
   return mode === "anxiety" || mode === "loneliness";
 }
 
-function chooseResponseGoal({
+function chooseListeningStrategy({
+  userMessage,
   mode,
   topCandidate,
   shouldAskQuestion,
 }: {
+  userMessage: string;
   mode: ConversationMode;
   topCandidate: FocusCandidate | null;
   shouldAskQuestion: boolean;
-}): ResponseGoal {
-  if (mode === "safety") {
-    return "safety";
+}): ListeningStrategy {
+  if (requestsTopicChange(userMessage)) {
+    return "change_topic";
   }
 
-  if (mode === "continuation") {
-    return "continue";
+  if (isNoAnswer(userMessage)) {
+    return "allow_silence";
   }
 
-  if (topCandidate?.eventType === "remembered" || mode === "reminiscence") {
-    return "reminisce";
+  if (needsClarification(userMessage, topCandidate)) {
+    return "ask_clarification";
   }
 
   if (
     (mode === "loneliness" || mode === "anxiety") &&
     (!topCandidate || topCandidate.topicType === "feeling")
   ) {
-    return "empathize";
+    return "reflect_emotion";
   }
 
-  if (topCandidate?.eventType === "talked_with" || topCandidate?.eventType === "met") {
-    return "chat";
+  if (topCandidate?.topicType === "feeling") {
+    return "reflect_emotion";
   }
 
-  if (topCandidate && topCandidate.topicType !== "feeling") {
-    return shouldAskQuestion ? "chat" : "react";
+  if (shouldAskQuestion) {
+    return "ask_open_question";
   }
 
-  return shouldAskQuestion ? "ask" : "chat";
+  if (mode === "continuation" || mode === "reminiscence") {
+    return "reflect_content";
+  }
+
+  if (topCandidate) {
+    return "show_interest";
+  }
+
+  return "acknowledge";
+}
+
+export function normalizeConversationTurnPlan({
+  plan,
+  userMessage,
+  recentAssistantReplies,
+  hasConcreteTopic = plan.mainFocus !== null && plan.topicType !== "feeling",
+}: {
+  plan: ConversationTurnPlan;
+  userMessage: string;
+  recentAssistantReplies: string[];
+  hasConcreteTopic?: boolean;
+}): ConversationTurnPlan {
+  const compactLength = userMessage.replace(/\s+/g, "").length;
+  const noAnswer = isNoAnswer(userMessage);
+  const shortWithoutTopic = !hasConcreteTopic && compactLength <= 12;
+  const repeatedQuestions = hasTwoRecentQuestions(recentAssistantReplies);
+  let listeningStrategy = noAnswer ? "allow_silence" : plan.listeningStrategy;
+
+  if (
+    (shortWithoutTopic || repeatedQuestions) &&
+    (listeningStrategy === "ask_open_question" || listeningStrategy === "ask_clarification")
+  ) {
+    listeningStrategy =
+      plan.mode === "loneliness" ||
+      plan.mode === "anxiety" ||
+      plan.topicType === "feeling"
+        ? "reflect_emotion"
+        : plan.mainFocus
+          ? "show_interest"
+          : "acknowledge";
+  }
+
+  const shouldAskQuestion =
+    !noAnswer &&
+    !shortWithoutTopic &&
+    !repeatedQuestions &&
+    (listeningStrategy === "ask_open_question" || listeningStrategy === "ask_clarification");
+
+  return {
+    ...plan,
+    listeningStrategy,
+    shouldAskQuestion,
+    suggestedQuestion: shouldAskQuestion ? (plan.suggestedQuestion ?? null) : null,
+  };
 }
 
 function buildAvoidPatterns({
@@ -983,7 +1066,7 @@ export function analyzeConversationTurn({
   });
   const mainFocus = topCandidate?.label ?? null;
 
-  return {
+  const plan: ConversationTurnPlan = {
     safetyLevel: safetyResult,
     mode,
     focusTerms: candidates.map((candidate) => candidate.label).slice(0, 5),
@@ -991,7 +1074,8 @@ export function analyzeConversationTurn({
     eventType: topCandidate?.eventType ?? "unknown",
     relationHint: topCandidate?.relationHint ?? null,
     topicType: topCandidate?.topicType ?? "unknown",
-    responseGoal: chooseResponseGoal({
+    listeningStrategy: chooseListeningStrategy({
+      userMessage,
       mode,
       topCandidate,
       shouldAskQuestion,
@@ -1004,6 +1088,13 @@ export function analyzeConversationTurn({
       assistantReplies,
     }),
   };
+
+  return normalizeConversationTurnPlan({
+    plan,
+    userMessage,
+    recentAssistantReplies: assistantReplies,
+    hasConcreteTopic: topCandidate !== null && isConcreteCandidate(topCandidate),
+  });
 }
 
 export function getRecentAssistantReplies(messages: StoredChatMessage[]) {

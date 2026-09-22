@@ -82,6 +82,12 @@ export default function DashboardClient() {
               更新
             </button>
             <Link
+              href="/memory"
+              className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#8eb5a6] bg-[#edf7f2] px-5 text-lg font-semibold text-[#285747] transition hover:bg-[#dcefe7]"
+            >
+              記憶を確認する
+            </Link>
+            <Link
               href="/"
               className="inline-flex min-h-12 items-center justify-center rounded-lg bg-[#265d8f] px-5 text-lg font-semibold text-white transition hover:bg-[#214f79]"
             >

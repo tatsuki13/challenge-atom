@@ -7,6 +7,8 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
+    "test:memory": "node --experimental-strip-types --test tests/memoryRetrieval.test.mjs tests/memoryRetrievalEvaluation.test.mjs tests/memoryManagement.test.mjs tests/replyValidation.test.mjs",
+    "evaluate:memory": "node --experimental-strip-types scripts/evaluateMemoryRetrieval.mjs",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "clean:cache": "rm -rf .next .turbo .vercel/output node_modules/.cache .cache",

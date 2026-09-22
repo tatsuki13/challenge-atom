@@ -1,5 +1,5 @@
-import type { StoredChatMessage } from "../conversationTypes";
-import { getUrgentSafetyReply } from "../safety";
+import type { MemoryPromptContext, MemoryRetrievalMode, StoredChatMessage } from "../conversationTypes";
+import { getReplyContract } from "./replyValidation";
 import type { ConversationTurnPlan } from "./conversationEngine";
 
 type ReplySet = {
@@ -152,57 +152,63 @@ const focusReplies: Record<string, ReplySet> = {
   },
 };
 
-const goalReplies: Record<ConversationTurnPlan["responseGoal"], ReplySet> = {
-  react: {
+const strategyReplies: Record<ConversationTurnPlan["listeningStrategy"], ReplySet> = {
+  acknowledge: {
     chat: [
-      "へえ、そうなんですね。そこから話が広がりそうで、少し面白いですね。",
-      "なるほど。そういう話題って、聞いているとその場の様子が浮かんできますね。",
+      "そうなんですね。お話ししてくださって、ありがとうございます。",
+      "なるほど。今のお話、受け取りました。",
     ],
     ask: [],
   },
-  chat: {
+  reflect_content: {
     chat: [
-      "そうなんですね。何気ない話でも、その日の感じが少し出ますね。",
-      "なるほど。そういう出来事があると、一日の手触りが少し残りますね。",
-    ],
-    ask: [
-      "そうなんですね。何の話で盛り上がったんですか？",
-    ],
-  },
-  continue: {
-    chat: [
-      "その話、もう少し聞きたいです。",
-      "それで、それで。続きも聞かせてください。",
+      "そういうことがあったんですね。今のお話の様子が少し伝わってきました。",
+      "今日はそんな流れだったんですね。ゆっくり聞いています。",
     ],
     ask: [],
   },
-  ask: {
-    chat: [
-      "そうなんですね。今日はそんな流れだったんですね。",
-    ],
-    ask: [
-      "そうなんですね。何の話で盛り上がったんですか？",
-    ],
-  },
-  reminisce: {
-    chat: [
-      "懐かしい話ですね。その頃の空気まで少し思い出しそうです。",
-    ],
-    ask: [
-      "懐かしい話ですね。その頃は何が楽しみでしたか？",
-    ],
-  },
-  empathize: {
+  reflect_emotion: {
     chat: [
       "そうでしたか。その感じが今日は少し残っているんですね。",
-      "うん、そういう日もありますね。無理に明るくしなくても、そのまま話して大丈夫です。",
+      "うん、そういう時もありますね。無理に気持ちを変えなくて大丈夫です。",
+    ],
+    ask: [],
+  },
+  show_interest: {
+    chat: [
+      "へえ、そうなんですね。そのお話、少し気になります。",
+      "なるほど。聞いていると、その場の様子が少し浮かびますね。",
+    ],
+    ask: [],
+  },
+  ask_open_question: {
+    chat: [
+      "そうなんですね。今のお話、もう少し聞いてみたいです。",
     ],
     ask: [
-      "そうでしたか。今いちばん気になっているのは、どのあたりですか？",
+      "そうなんですね。そのことを、もう少し聞かせてもらえますか？",
     ],
   },
-  safety: {
-    chat: [getUrgentSafetyReply()],
+  ask_clarification: {
+    chat: [
+      "今のお話を、もう少し確かめてもよさそうですね。",
+    ],
+    ask: [
+      "それは、どのことを指していますか？",
+    ],
+  },
+  allow_silence: {
+    chat: [
+      "そうですよね。今は無理に話さなくても大丈夫です。",
+      "分かりました。ここで少しゆっくりしていて大丈夫ですよ。",
+    ],
+    ask: [],
+  },
+  change_topic: {
+    chat: [
+      "では、少し話題を変えてみましょう。最近目に留まったものの話はいかがでしょう。",
+      "それでは別のお話にしましょう。季節のことで思い浮かぶものを一つ置いておきますね。",
+    ],
     ask: [],
   },
 };
@@ -411,19 +417,40 @@ export function createMockReply({
   recentMessages = [],
   topicStarter = false,
   topicTitle = null,
+  memoryMode = "none",
+  memories = [],
+  memorySelectionRequired = false,
 }: {
   userMessage: string;
   turnPlan: ConversationTurnPlan;
   recentMessages?: StoredChatMessage[];
   topicStarter?: boolean;
   topicTitle?: string | null;
+  memoryMode?: MemoryRetrievalMode;
+  memories?: MemoryPromptContext[];
+  memorySelectionRequired?: boolean;
 }) {
-  if (turnPlan.safetyLevel === "urgent") {
-    return getUrgentSafetyReply();
+  const replyContract = getReplyContract(memoryMode, memorySelectionRequired);
+
+  if (replyContract.memoryRole === "clarification") {
+    return "以前のお話のうち、好み・これまでの経験・これからしたいことの、どれについて確認したいですか？";
+  }
+
+  if (replyContract.memoryRole === "candidate_presentation" && memories.length > 0) {
+    const items = memories.map((memory) => `「${memory.content}」`).join("、");
+    return replyContract.requiresClarificationIntent
+      ? `${items}について記憶しています。どのことを確認したいですか？`
+      : `${items}についてお話ししていました。`;
+  }
+
+  if (replyContract.memoryRole === "candidate_presentation") {
+    return "確認できる内容をまだ見つけられませんでした。もう少し具体的な話題を教えてもらえますか？";
   }
 
   if (topicStarter && topicTitle) {
-    return `それでは今回は「${topicTitle}」でお話ししましょう。まず、そのことでぱっと思い浮かぶことはありますか？`;
+    return turnPlan.shouldAskQuestion
+      ? `それでは今回は「${topicTitle}」でお話ししましょう。まず、そのことでぱっと思い浮かぶことはありますか？`
+      : `それでは今回は「${topicTitle}」のお話にしましょう。思い浮かぶことがあれば、いつでも聞かせてください。`;
   }
 
   if (turnPlan.shouldAskQuestion && turnPlan.suggestedQuestion) {
@@ -434,8 +461,13 @@ export function createMockReply({
     return `${opener}${turnPlan.suggestedQuestion}`;
   }
 
+  const canUseFocus =
+    turnPlan.listeningStrategy === "reflect_content" ||
+    turnPlan.listeningStrategy === "reflect_emotion" ||
+    turnPlan.listeningStrategy === "show_interest" ||
+    turnPlan.listeningStrategy === "ask_open_question";
   const focusReply =
-    turnPlan.mainFocus !== null
+    canUseFocus && turnPlan.mainFocus !== null
       ? focusReplies[turnPlan.mainFocus] ??
         buildGenericFocusReply({
           focus: turnPlan.mainFocus,
@@ -443,7 +475,7 @@ export function createMockReply({
           turnPlan,
         })
       : null;
-  const fallbackReply = goalReplies[turnPlan.responseGoal] ?? goalReplies.chat;
+  const fallbackReply = strategyReplies[turnPlan.listeningStrategy];
   const replySet = focusReply ?? fallbackReply;
   const replies =
     turnPlan.shouldAskQuestion && replySet.ask.length > 0

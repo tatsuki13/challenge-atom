@@ -32,6 +32,18 @@ textarea {
   font: inherit;
 }
 
+.memory-page {
+  overflow-wrap: anywhere;
+}
+
+.memory-page button,
+.memory-page textarea,
+.memory-page select {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+}
+
 .pet-avatar {
   position: relative;
   display: inline-flex;

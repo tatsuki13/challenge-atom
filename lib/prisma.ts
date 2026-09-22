@@ -6,12 +6,14 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 export function getPrismaClient() {
-  if (!process.env.DATABASE_URL) {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+
+  if (!databaseUrl) {
     return null;
   }
 
   globalForPrisma.prismaClient ??= new PrismaClient({
-    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+    adapter: new PrismaPg({ connectionString: databaseUrl }),
   });
   return globalForPrisma.prismaClient;
 }
