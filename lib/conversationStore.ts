@@ -4,6 +4,8 @@ import {
   getTokyoDateKey,
 } from "./date";
 import {
+  endDemoConversation,
+  getDemoConversationSession,
   getDemoMetrics,
   recordDemoAssistantTurn,
   recordDemoMemoryCandidates,
@@ -16,6 +18,7 @@ import {
   DEMO_PROFILE_ID,
   RECENT_MESSAGE_LIMIT,
   type EmotionLabel,
+  type ConversationSession,
   type ExtractedMemoryCandidate,
   type ConversationDecisionInput,
   type MetricsSummary,
@@ -75,18 +78,106 @@ async function ensureDemoProfile(prisma: ProfileStoreClient) {
   });
 }
 
+export async function getConversationSession(
+  conversationId: string,
+  profileId: string = DEMO_PROFILE_ID,
+): Promise<ConversationSession | null> {
+  const prisma = getPrismaClient();
+
+  if (!prisma) {
+    return profileId === DEMO_PROFILE_ID
+      ? getDemoConversationSession(conversationId)
+      : null;
+  }
+
+  try {
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        profileId,
+        endedAt: null,
+      },
+      select: {
+        id: true,
+        startedAt: true,
+        messages: { orderBy: { createdAt: "asc" } },
+      },
+    });
+
+    if (!conversation) {
+      return profileId === DEMO_PROFILE_ID
+        ? getDemoConversationSession(conversationId)
+        : null;
+    }
+    if (getTokyoDateKey(conversation.startedAt) !== getTokyoDateKey()) {
+      return null;
+    }
+
+    return {
+      conversationId: conversation.id,
+      startedAt: conversation.startedAt,
+      messages: conversation.messages.map(toStoredMessage),
+      storageBackend: "database",
+    };
+  } catch {
+    console.warn("Conversation session read failed.", {
+      reasonCode: "conversation_session_read_failed",
+    });
+    return profileId === DEMO_PROFILE_ID
+      ? getDemoConversationSession(conversationId)
+      : null;
+  }
+}
+
+export async function endConversationSession(
+  conversationId: string,
+  profileId: string = DEMO_PROFILE_ID,
+) {
+  const prisma = getPrismaClient();
+
+  if (!prisma) {
+    return profileId === DEMO_PROFILE_ID
+      ? endDemoConversation(conversationId)
+      : false;
+  }
+
+  try {
+    const result = await prisma.conversation.updateMany({
+      where: {
+        id: conversationId,
+        profileId,
+        endedAt: null,
+      },
+      data: { endedAt: new Date() },
+    });
+    return (
+      result.count === 1 ||
+      (profileId === DEMO_PROFILE_ID && endDemoConversation(conversationId))
+    );
+  } catch {
+    console.warn("Conversation session end failed.", {
+      reasonCode: "conversation_session_end_failed",
+    });
+    return profileId === DEMO_PROFILE_ID
+      ? endDemoConversation(conversationId)
+      : false;
+  }
+}
+
 async function incrementDailyMetric({
   prisma,
   newConversation,
   userMessageCount,
   assistantMessageCount,
   userCharCount,
+  profileId,
 }: {
   prisma: MetricsStoreClient;
   newConversation: boolean;
   userMessageCount: number;
   assistantMessageCount: number;
   userCharCount: number;
+  profileId: string;
 }) {
   const dateKey = getTokyoDateKey();
   const date = dateKeyToUtcDate(dateKey);
@@ -95,12 +186,12 @@ async function incrementDailyMetric({
   await prisma.dailyMetric.upsert({
     where: {
       profileId_date: {
-        profileId: DEMO_PROFILE_ID,
+        profileId,
         date,
       },
     },
     create: {
-      profileId: DEMO_PROFILE_ID,
+      profileId,
       date,
       conversationCount: newConversation ? 1 : 0,
       userMessageCount,
@@ -119,6 +210,7 @@ async function incrementDailyMetric({
 }
 
 export async function recordUserMessage({
+  profileId = DEMO_PROFILE_ID,
   conversationId,
   message,
   rawContent,
@@ -128,6 +220,7 @@ export async function recordUserMessage({
   emotionLabel,
   riskLevel,
 }: {
+  profileId?: string;
   conversationId?: string;
   message: string;
   rawContent: string | null;
@@ -145,6 +238,9 @@ export async function recordUserMessage({
   const prisma = getPrismaClient();
 
   if (!prisma) {
+    if (profileId !== DEMO_PROFILE_ID) {
+      throw new Error("Database storage is required for authenticated users.");
+    }
     return recordDemoUserMessage({
       conversationId,
       message,
@@ -159,25 +255,34 @@ export async function recordUserMessage({
 
   try {
     const result = await prisma.$transaction(async (transaction) => {
-      await ensureDemoProfile(transaction);
+      if (profileId === DEMO_PROFILE_ID) await ensureDemoProfile(transaction);
 
       const existingConversation = conversationId
-        ? await transaction.conversation.findUnique({
-            where: { id: conversationId, profileId: DEMO_PROFILE_ID },
+        ? await transaction.conversation.findFirst({
+            where: {
+              id: conversationId,
+              profileId,
+              endedAt: null,
+            },
           })
         : null;
+      const currentConversation =
+        existingConversation &&
+        getTokyoDateKey(existingConversation.startedAt) === getTokyoDateKey()
+          ? existingConversation
+          : null;
       const conversation =
-        existingConversation ??
+        currentConversation ??
         (await transaction.conversation.create({
           data: {
-            profileId: DEMO_PROFILE_ID,
+            profileId,
             title: message.slice(0, 24) || "今日の会話",
             moodScoreStart: moodScore,
             moodScoreEnd: moodScore,
           },
         }));
 
-      if (existingConversation && moodScore !== null) {
+      if (currentConversation && moodScore !== null) {
         await transaction.conversation.update({
           where: { id: conversation.id },
           data: { moodScoreEnd: moodScore },
@@ -200,7 +305,7 @@ export async function recordUserMessage({
       if (riskLevel !== "none") {
         await transaction.riskEvent.create({
           data: {
-            profileId: DEMO_PROFILE_ID,
+            profileId,
             conversationId: conversation.id,
             messageId: userMessage.id,
             riskLevel,
@@ -211,10 +316,11 @@ export async function recordUserMessage({
 
       await incrementDailyMetric({
         prisma: transaction,
-        newConversation: !existingConversation,
+        newConversation: !currentConversation,
         userMessageCount: 1,
         assistantMessageCount: 0,
         userCharCount: message.length,
+        profileId,
       });
 
       const recentMessages = await transaction.message.findMany({
@@ -233,6 +339,7 @@ export async function recordUserMessage({
       storageBackend: "database",
     };
   } catch {
+    if (profileId !== DEMO_PROFILE_ID) throw new Error("Database save failed.");
     console.warn("Database save failed; using memory store.");
     return recordDemoUserMessage({
       conversationId,
@@ -248,6 +355,7 @@ export async function recordUserMessage({
 }
 
 export async function recordAssistantTurn({
+  profileId = DEMO_PROFILE_ID,
   conversationId,
   reply,
   emotionLabel,
@@ -255,6 +363,7 @@ export async function recordAssistantTurn({
   storageBackend,
   decision,
 }: {
+  profileId?: string;
   conversationId: string;
   reply: string;
   emotionLabel: EmotionLabel;
@@ -266,6 +375,9 @@ export async function recordAssistantTurn({
   decision: StoredConversationDecision;
 }> {
   if (storageBackend === "memory") {
+    if (profileId !== DEMO_PROFILE_ID) {
+      throw new Error("In-memory storage is unavailable for authenticated users.");
+    }
     return recordDemoAssistantTurn({
       conversationId,
       reply,
@@ -317,8 +429,8 @@ export async function recordAssistantTurn({
   }
 
   const result = await prisma.$transaction(async (transaction) => {
-    const conversation = await transaction.conversation.findUnique({
-      where: { id: conversationId },
+    const conversation = await transaction.conversation.findFirst({
+      where: { id: conversationId, profileId },
       select: { profileId: true },
     });
     if (!conversation) {
@@ -496,6 +608,7 @@ export async function recordAssistantTurn({
       userMessageCount: 0,
       assistantMessageCount: 1,
       userCharCount: 0,
+      profileId,
     });
 
     return { assistantMessage, storedDecision };
@@ -520,12 +633,14 @@ export async function recordAssistantTurn({
 }
 
 export async function recordMemoryCandidates({
+  profileId = DEMO_PROFILE_ID,
   conversationId,
   decisionId,
   sourceMessageId,
   storageBackend,
   candidates,
 }: {
+  profileId?: string;
   conversationId: string;
   decisionId: string;
   sourceMessageId: string;
@@ -540,6 +655,9 @@ export async function recordMemoryCandidates({
   }
 
   if (storageBackend === "memory") {
+    if (profileId !== DEMO_PROFILE_ID) {
+      return { candidates: [], failureReason: "memory_write_failed" };
+    }
     try {
       return {
         candidates: recordDemoMemoryCandidates({
@@ -574,7 +692,7 @@ export async function recordMemoryCandidates({
     const storedCandidates = await prisma.$transaction(async (transaction) => {
       const [conversation, decision, sourceMessage] = await Promise.all([
         transaction.conversation.findFirst({
-          where: { id: conversationId, profileId: DEMO_PROFILE_ID },
+          where: { id: conversationId, profileId },
           select: { id: true, profileId: true },
         }),
         transaction.conversationDecision.findFirst({
@@ -649,15 +767,18 @@ export async function recordMemoryCandidates({
   }
 }
 
-export async function getTodayMetrics(): Promise<MetricsSummary> {
+export async function getTodayMetrics(
+  profileId: string = DEMO_PROFILE_ID,
+): Promise<MetricsSummary> {
   const prisma = getPrismaClient();
 
   if (!prisma) {
-    return getDemoMetrics();
+    if (profileId === DEMO_PROFILE_ID) return getDemoMetrics();
+    throw new Error("Database storage is required for authenticated users.");
   }
 
   try {
-    await ensureDemoProfile(prisma);
+    if (profileId === DEMO_PROFILE_ID) await ensureDemoProfile(prisma);
 
     const dateKey = getTokyoDateKey();
     const date = dateKeyToUtcDate(dateKey);
@@ -665,13 +786,13 @@ export async function getTodayMetrics(): Promise<MetricsSummary> {
     const metric = await prisma.dailyMetric.findUnique({
       where: {
         profileId_date: {
-          profileId: DEMO_PROFILE_ID,
+          profileId,
           date,
         },
       },
     });
     const latestConversation = await prisma.conversation.findFirst({
-      where: { profileId: DEMO_PROFILE_ID },
+      where: { profileId },
       orderBy: { startedAt: "desc" },
       select: {
         moodScoreEnd: true,
@@ -681,7 +802,7 @@ export async function getTodayMetrics(): Promise<MetricsSummary> {
     const riskGroups = await prisma.riskEvent.groupBy({
       by: ["riskLevel"],
       where: {
-        profileId: DEMO_PROFILE_ID,
+        profileId,
         createdAt: {
           gte: date,
           lt: nextDate,
@@ -713,6 +834,7 @@ export async function getTodayMetrics(): Promise<MetricsSummary> {
       aiMode: getAiMode(),
     };
   } catch {
+    if (profileId !== DEMO_PROFILE_ID) throw new Error("Database metrics failed.");
     console.warn("Database metrics failed; using memory metrics.");
     return getDemoMetrics();
   }

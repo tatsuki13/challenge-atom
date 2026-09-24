@@ -170,6 +170,11 @@ test("audit links selected results to usage and records generation discard", () 
     generationRejectionReason: "too_many_questions",
   });
   assert.equal(validateMemoryRetrievalAudit(rejectedAudit, []), null);
+  assert.equal(validateMemoryRetrievalAudit(auditInput({
+    request,
+    evaluation: discardSelectedMemoryResults(evaluation),
+    generationRejectionReason: "missing_continuation_cue",
+  }), []), null);
   assert.match(
     validateMemoryRetrievalAudit(rejectedAudit, [{ memoryId: "selected", retrievalScore: evaluation.results[0].score, usageReason: request.purpose, usageRole: "answer_context" }]) ?? "",
     /must not create memory usages/i,

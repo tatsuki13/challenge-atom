@@ -22,6 +22,30 @@ model Profile {
   memoryManagementActions  MemoryManagementAction[]
   memoryManagementRequests MemoryManagementRequest[]
   memoryRetrievalAudits     MemoryRetrievalAudit[]
+  user                      User?
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  profileId    String    @unique
+  profile      Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  sessions     Session[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Conversation {

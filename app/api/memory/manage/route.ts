@@ -1,7 +1,7 @@
 import {
-  DEMO_PROFILE_ID,
   type MemoryManagementInput,
 } from "@/lib/conversationTypes";
+import { getCurrentUser } from "@/lib/auth";
 import {
   isMemoryManagementAction,
   isMemoryManagementReasonCode,
@@ -13,13 +13,15 @@ export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "no-store" };
 
 export async function POST(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return Response.json({ error: "authentication_required" }, { status: 401, headers });
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
     return Response.json({ error: "Invalid JSON body." }, { status: 400, headers });
   }
-  if (body.profileId !== undefined && body.profileId !== DEMO_PROFILE_ID) {
+  if (body.profileId !== undefined && body.profileId !== user.profileId) {
     return Response.json({ error: "Profile is not available.", reasonCode: "profile_mismatch" }, { status: 403, headers });
   }
   if (
@@ -33,7 +35,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid management input.", reasonCode: "invalid_input" }, { status: 400, headers });
   }
   const input: MemoryManagementInput = {
-    profileId: DEMO_PROFILE_ID,
+    profileId: user.profileId,
     requestKey: body.requestKey,
     memoryId: body.memoryId,
     action: body.action,

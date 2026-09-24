@@ -174,7 +174,11 @@ function HistoryEntry({ item }: { item: ManagedMemoryHistoryItem }) {
   );
 }
 
-export default function MemoryClient() {
+export default function MemoryClient({
+  conversationId,
+}: {
+  conversationId?: string;
+}) {
   const [candidates, setCandidates] = useState<MemoryCandidateReviewItem[]>([]);
   const [memories, setMemories] = useState<ManagedMemoryItem[]>([]);
   const [archivedMemories, setArchivedMemories] = useState<ManagedMemoryItem[]>([]);
@@ -192,6 +196,9 @@ export default function MemoryClient() {
   const [requestDrafts, setRequestDrafts] = useState<Record<string, string>>({});
   const [showArchived, setShowArchived] = useState(false);
   const requestKeys = useRef(new Map<string, string>());
+  const conversationQuery = conversationId
+    ? `?conversationId=${encodeURIComponent(conversationId)}`
+    : "";
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -506,13 +513,13 @@ export default function MemoryClient() {
               再読み込み
             </button>
             <Link
-              href="/dashboard"
+              href={`/dashboard${conversationQuery}`}
               className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#b8c6d6] bg-white px-5 text-lg font-semibold transition hover:bg-[#edf4f1]"
             >
               今日の記録
             </Link>
             <Link
-              href="/"
+              href={`/${conversationQuery}`}
               className="inline-flex min-h-12 items-center justify-center rounded-lg bg-[#265d8f] px-5 text-lg font-semibold text-white transition hover:bg-[#214f79]"
             >
               会話に戻る

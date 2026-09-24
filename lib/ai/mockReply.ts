@@ -1,5 +1,5 @@
 import type { MemoryPromptContext, MemoryRetrievalMode, StoredChatMessage } from "../conversationTypes";
-import { getReplyContract } from "./replyValidation";
+import { getReplyContract, hasContinuationCue } from "./replyValidation";
 import type { ConversationTurnPlan } from "./conversationEngine";
 
 type ReplySet = {
@@ -430,27 +430,35 @@ export function createMockReply({
   memories?: MemoryPromptContext[];
   memorySelectionRequired?: boolean;
 }) {
-  const replyContract = getReplyContract(memoryMode, memorySelectionRequired);
+  const replyContract = getReplyContract(
+    memoryMode,
+    memorySelectionRequired,
+    turnPlan.listeningStrategy,
+  );
+  const finish = (text: string) =>
+    replyContract.requiresContinuationCue && !hasContinuationCue(text)
+      ? `${text} 続きがあれば、ゆっくり聞かせてください。`
+      : text;
 
   if (replyContract.memoryRole === "clarification") {
-    return "以前のお話のうち、好み・これまでの経験・これからしたいことの、どれについて確認したいですか？";
+    return finish("以前のお話のうち、好み・これまでの経験・これからしたいことの、どれについて確認したいですか？");
   }
 
   if (replyContract.memoryRole === "candidate_presentation" && memories.length > 0) {
     const items = memories.map((memory) => `「${memory.content}」`).join("、");
-    return replyContract.requiresClarificationIntent
+    return finish(replyContract.requiresClarificationIntent
       ? `${items}について記憶しています。どのことを確認したいですか？`
-      : `${items}についてお話ししていました。`;
+      : `${items}についてお話ししていました。`);
   }
 
   if (replyContract.memoryRole === "candidate_presentation") {
-    return "確認できる内容をまだ見つけられませんでした。もう少し具体的な話題を教えてもらえますか？";
+    return finish("確認できる内容をまだ見つけられませんでした。もう少し具体的な話題を教えてもらえますか？");
   }
 
   if (topicStarter && topicTitle) {
-    return turnPlan.shouldAskQuestion
+    return finish(turnPlan.shouldAskQuestion
       ? `それでは今回は「${topicTitle}」でお話ししましょう。まず、そのことでぱっと思い浮かぶことはありますか？`
-      : `それでは今回は「${topicTitle}」のお話にしましょう。思い浮かぶことがあれば、いつでも聞かせてください。`;
+      : `それでは今回は「${topicTitle}」のお話にしましょう。思い浮かぶことがあれば、いつでも聞かせてください。`);
   }
 
   if (turnPlan.shouldAskQuestion && turnPlan.suggestedQuestion) {
@@ -458,7 +466,7 @@ export function createMockReply({
       ? `${turnPlan.mainFocus}の話なんですね。`
       : "";
 
-    return `${opener}${turnPlan.suggestedQuestion}`;
+    return finish(`${opener}${turnPlan.suggestedQuestion}`);
   }
 
   const canUseFocus =
@@ -482,9 +490,9 @@ export function createMockReply({
       ? replySet.ask
       : replySet.chat;
 
-  return pickReply({
+  return finish(pickReply({
     replies,
     recentMessages,
     shouldAskQuestion: turnPlan.shouldAskQuestion,
-  });
+  }));
 }

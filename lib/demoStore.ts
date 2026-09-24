@@ -3,6 +3,7 @@ import {
   DEMO_PROFILE_ID,
   RECENT_MESSAGE_LIMIT,
   type ChatRole,
+  type ConversationSession,
   type ConversationDecisionInput,
   type EmotionLabel,
   type ExtractedMemoryCandidate,
@@ -115,12 +116,17 @@ function ensureConversation({
     ? state.conversations.get(conversationId)
     : undefined;
 
-  if (existing) {
+  if (
+    existing &&
+    existing.profileId === DEMO_PROFILE_ID &&
+    existing.endedAt === null &&
+    getTokyoDateKey(existing.startedAt) === getTokyoDateKey()
+  ) {
     existing.moodScoreEnd = moodScore ?? existing.moodScoreEnd;
     return existing;
   }
 
-  const id = conversationId || createId("conv");
+  const id = createId("conv");
   const conversation: DemoConversation = {
     id,
     profileId: DEMO_PROFILE_ID,
@@ -134,6 +140,41 @@ function ensureConversation({
 
   state.conversations.set(id, conversation);
   return conversation;
+}
+
+export function getDemoConversationSession(
+  conversationId: string,
+): ConversationSession | null {
+  const conversation = getState().conversations.get(conversationId);
+  if (
+    !conversation ||
+    conversation.profileId !== DEMO_PROFILE_ID ||
+    conversation.endedAt !== null ||
+    getTokyoDateKey(conversation.startedAt) !== getTokyoDateKey()
+  ) {
+    return null;
+  }
+
+  return {
+    conversationId: conversation.id,
+    startedAt: conversation.startedAt,
+    messages: conversation.messages.slice(),
+    storageBackend: "memory",
+  };
+}
+
+export function endDemoConversation(conversationId: string) {
+  const conversation = getState().conversations.get(conversationId);
+  if (
+    !conversation ||
+    conversation.profileId !== DEMO_PROFILE_ID ||
+    conversation.endedAt !== null
+  ) {
+    return false;
+  }
+
+  conversation.endedAt = new Date();
+  return true;
 }
 
 function createMessage({

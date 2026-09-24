@@ -201,6 +201,7 @@ export type MemoryRetrievalFailureReason =
 
 export type ReplyRejectionReason =
   | "too_many_questions"
+  | "missing_continuation_cue"
   | "missing_clarification"
   | "unsupported_memory_claim"
   | "mode_contract_violation"
@@ -494,6 +495,13 @@ export type StoredChatMessage = {
   inputType: MessageInputType;
   clientMessageId: string | null;
   createdAt: Date;
+};
+
+export type ConversationSession = {
+  conversationId: string;
+  startedAt: Date;
+  messages: StoredChatMessage[];
+  storageBackend: StorageMode;
 };
 
 export type ConversationDecisionInput = {

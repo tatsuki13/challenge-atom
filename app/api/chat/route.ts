@@ -27,6 +27,7 @@ import {
 import { normalizeDetectedMemoryManagementRequest } from "@/lib/ai/memoryManagementDetection";
 import { countQuestions, validateReplyAgainstContract } from "@/lib/ai/replyValidation";
 import { estimateEmotion } from "@/lib/emotion";
+import { getCurrentUser } from "@/lib/auth";
 import {
   recordAssistantTurn,
   recordMemoryCandidates,
@@ -34,7 +35,6 @@ import {
 } from "@/lib/conversationStore";
 import { retrieveConfirmedMemories } from "@/lib/memoryRetrievalService";
 import {
-  DEMO_PROFILE_ID,
   dedupeSourceUtteranceIds,
   isListeningStrategy,
   isMessageInputType,
@@ -621,6 +621,10 @@ async function createOpenAIReply({
 }
 
 export async function POST(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return jsonResponse({ error: "authentication_required" }, 401);
+  const profileId = user.profileId;
+
   let body: {
     message?: unknown;
     conversationId?: unknown;
@@ -685,6 +689,7 @@ export async function POST(request: Request) {
   const riskLevel: RiskLevel = detectRisk(message);
   const emotionLabel = estimateEmotion(message);
   const savedUserMessage = await recordUserMessage({
+    profileId,
     conversationId,
     message,
     rawContent,
@@ -824,7 +829,7 @@ export async function POST(request: Request) {
     if (memoryRetrievalRequest?.mode === "topic_match" || memoryRetrievalRequest?.mode === "category_browse") {
       try {
         const retrieval = await retrieveConfirmedMemories({
-          profileId: DEMO_PROFILE_ID,
+          profileId,
           storageBackend: savedUserMessage.storageBackend,
           request: memoryRetrievalRequest,
         });
@@ -857,7 +862,7 @@ export async function POST(request: Request) {
     ) {
       try {
         const managementRetrieval = await retrieveConfirmedMemories({
-          profileId: DEMO_PROFILE_ID,
+          profileId,
           storageBackend: savedUserMessage.storageBackend,
           request: {
             mode: "topic_match",
@@ -911,6 +916,7 @@ export async function POST(request: Request) {
           text: candidateReply ?? "",
           memoryMode: memoryRetrievalRequest?.mode ?? "none",
           memorySelectionRequired: memorySearchEvaluation?.selectionRequired ?? false,
+          listeningStrategy: finalTurnPlan?.listeningStrategy ?? null,
           memories: memorySearchResults.map(toMemoryPromptContext),
           currentUserMessage: message,
         });
@@ -967,7 +973,7 @@ export async function POST(request: Request) {
           : "answer_context" as const,
       })),
       memoryRetrievalAudit: createMemoryRetrievalAuditInput({
-        profileId: DEMO_PROFILE_ID,
+        profileId,
         request: memoryRetrievalRequest,
         requestSource: memoryRetrievalSource,
         plannedMode: plannedMemoryRetrievalMode,
@@ -981,7 +987,7 @@ export async function POST(request: Request) {
       detectedMemoryManagementRequest.category
         ? {
             memoryManagementRequest: {
-              profileId: DEMO_PROFILE_ID,
+              profileId,
               sourceMessageId: savedUserMessage.userMessage.id,
               intent: detectedMemoryManagementRequest.intent,
               category: detectedMemoryManagementRequest.category,
@@ -998,6 +1004,7 @@ export async function POST(request: Request) {
   let savedAssistantTurn;
   try {
     savedAssistantTurn = await recordAssistantTurn({
+      profileId,
       conversationId: savedUserMessage.conversationId,
       reply,
       emotionLabel,
@@ -1022,6 +1029,7 @@ export async function POST(request: Request) {
     });
     generationSource = "mock";
     savedAssistantTurn = await recordAssistantTurn({
+      profileId,
       conversationId: savedUserMessage.conversationId,
       reply,
       emotionLabel,
@@ -1032,6 +1040,7 @@ export async function POST(request: Request) {
   }
   if (extractedMemoryCandidates.length > 0) {
     const memoryWrite = await recordMemoryCandidates({
+      profileId,
       conversationId: savedUserMessage.conversationId,
       decisionId: savedAssistantTurn.decision.id,
       sourceMessageId: savedUserMessage.userMessage.id,

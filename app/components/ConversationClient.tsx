@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import type {
   EmotionLabel,
@@ -57,6 +58,17 @@ type ChatResponse = {
   generationSource: string;
   memoryExtraction: MemoryExtractionResult;
   debug?: ConversationDebug;
+};
+
+type ConversationSessionResponse = {
+  conversationId: string;
+  messages: Array<{
+    id: string;
+    role: "user" | "assistant";
+    text: string;
+    emotionLabel: EmotionLabel | null;
+    riskLevel: RiskLevel;
+  }>;
 };
 
 type SpeechRecognitionResultLike = {
@@ -174,17 +186,29 @@ function isEditableTarget(target: EventTarget | null) {
   );
 }
 
-export default function ConversationClient() {
+export default function ConversationClient({
+  initialConversationId,
+}: {
+  initialConversationId?: string;
+}) {
+  const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [inputType, setInputType] = useState<MessageInputType>("text");
-  const [conversationId, setConversationId] = useState<string>();
+  const [conversationId, setConversationId] = useState<string | undefined>(
+    initialConversationId,
+  );
   const [moodScore, setMoodScore] = useState<number | null>(null);
   const [speechEnabled, setSpeechEnabled] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [speechMessage, setSpeechMessage] = useState("");
   const [listening, setListening] = useState(false);
   const [sending, setSending] = useState(false);
+  const [restoringConversation, setRestoringConversation] = useState(
+    Boolean(initialConversationId),
+  );
+  const [endingConversation, setEndingConversation] = useState(false);
+  const [conversationNotice, setConversationNotice] = useState<string | null>(null);
   const [topicIndex, setTopicIndex] = useState(0);
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
   const [latestDebug, setLatestDebug] = useState<ConversationDebug | null>(null);
@@ -194,6 +218,12 @@ export default function ConversationClient() {
   const speechHoldActiveRef = useRef(false);
   const transcriptBaseRef = useRef("");
   const finalTranscriptRef = useRef("");
+  const restoredConversationIdRef = useRef<string | null>(null);
+
+  const conversationQuery = conversationId
+    ? `?conversationId=${encodeURIComponent(conversationId)}`
+    : "";
+  const conversationBusy = sending || restoringConversation || endingConversation;
 
   const refreshMetrics = useCallback(async () => {
     try {
@@ -225,6 +255,62 @@ export default function ConversationClient() {
       }
     };
   }, [refreshMetrics]);
+
+  useEffect(() => {
+    if (
+      !initialConversationId ||
+      restoredConversationIdRef.current === initialConversationId
+    ) {
+      setRestoringConversation(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const sessionConversationId = initialConversationId;
+    setRestoringConversation(true);
+    setConversationNotice(null);
+
+    async function restoreConversation() {
+      try {
+        const response = await fetch(
+          `/api/chat/session?conversationId=${encodeURIComponent(sessionConversationId)}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        if (!response.ok) {
+          throw new Error("conversation_not_available");
+        }
+
+        const data = (await response.json()) as ConversationSessionResponse;
+        restoredConversationIdRef.current = data.conversationId;
+        setConversationId(data.conversationId);
+        setMessages([
+          ...initialMessages,
+          ...data.messages.map((message) => ({
+            ...message,
+            emotionLabel: message.emotionLabel ?? undefined,
+          })),
+        ]);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        restoredConversationIdRef.current = null;
+        setConversationId(undefined);
+        setMessages(initialMessages);
+        setConversationNotice(
+          "前の会話は終了済みか、読み込めませんでした。新しい会話を始められます。",
+        );
+        router.replace("/", { scroll: false });
+      } finally {
+        if (!controller.signal.aborted) {
+          setRestoringConversation(false);
+        }
+      }
+    }
+
+    void restoreConversation();
+    return () => controller.abort();
+  }, [initialConversationId, router]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -336,7 +422,7 @@ export default function ConversationClient() {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.code !== "Space" || event.repeat || sending) {
+      if (event.code !== "Space" || event.repeat || conversationBusy) {
         return;
       }
 
@@ -369,7 +455,7 @@ export default function ConversationClient() {
       window.removeEventListener("keyup", handleKeyUp);
       stopListening();
     };
-  }, [sending, startListening, stopListening]);
+  }, [conversationBusy, startListening, stopListening]);
 
   async function submitMessage({
     text,
@@ -386,7 +472,7 @@ export default function ConversationClient() {
     inputType: MessageInputType;
     rawContent?: string;
   }) {
-    if (!text || sending) {
+    if (!text || conversationBusy) {
       return;
     }
 
@@ -446,6 +532,11 @@ export default function ConversationClient() {
       };
 
       setConversationId(data.conversationId);
+      restoredConversationIdRef.current = data.conversationId;
+      router.replace(
+        `/?conversationId=${encodeURIComponent(data.conversationId)}`,
+        { scroll: false },
+      );
       setLatestDebug(data.debug ?? null);
       setMessages((current) => [...current, assistantMessage]);
       speak(data.reply);
@@ -475,7 +566,7 @@ export default function ConversationClient() {
   }
 
   async function chooseTopic() {
-    if (sending) {
+    if (conversationBusy) {
       return;
     }
 
@@ -489,6 +580,60 @@ export default function ConversationClient() {
       topicTitle: nextTopic,
       inputType: "topic_starter",
     });
+  }
+
+  async function endConversation() {
+    if (conversationBusy || (!conversationId && messages.length === initialMessages.length)) {
+      return;
+    }
+    if (
+      !window.confirm(
+        "今日の会話を終えますか？ 会話の記録は残りますが、この画面は新しい会話に切り替わります。",
+      )
+    ) {
+      return;
+    }
+
+    setEndingConversation(true);
+    setConversationNotice(null);
+    try {
+      if (conversationId) {
+        const response = await fetch("/api/chat/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversationId }),
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error("conversation_end_failed");
+        }
+      }
+
+      recognitionRef.current?.stop();
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+      restoredConversationIdRef.current = null;
+      setConversationId(undefined);
+      setMessages(initialMessages);
+      setInput("");
+      setInputType("text");
+      setMoodScore(null);
+      setSpeechMessage("");
+      setLatestDebug(null);
+      setTopicIndex(0);
+      setConversationNotice(
+        "今日の会話を記録して終了しました。新しい会話を始められます。",
+      );
+      router.replace("/", { scroll: false });
+      void refreshMetrics();
+    } catch {
+      setConversationNotice(
+        "会話を終了できませんでした。記録を守るため、画面はそのままにしています。もう一度お試しください。",
+      );
+    } finally {
+      setEndingConversation(false);
+    }
   }
 
   return (
@@ -505,13 +650,13 @@ export default function ConversationClient() {
           </div>
           <nav className="flex flex-col gap-3 sm:flex-row" aria-label="主なページ">
             <Link
-              href="/memory"
+              href={`/memory${conversationQuery}`}
               className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#8eb5a6] bg-[#edf7f2] px-5 text-lg font-semibold text-[#285747] shadow-sm transition hover:bg-[#dcefe7]"
             >
               記憶を確認する
             </Link>
             <Link
-              href="/dashboard"
+              href={`/dashboard${conversationQuery}`}
               className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#b8c6d6] bg-white px-5 text-lg font-semibold text-[#1d2733] shadow-sm transition hover:bg-[#edf4f1]"
             >
               今日の記録を見る
@@ -521,6 +666,14 @@ export default function ConversationClient() {
 
         <section className="grid min-h-0 flex-1 gap-5 py-5 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="flex h-[calc(100vh-9rem)] min-h-[620px] flex-col overflow-hidden rounded-lg border border-[#d7e0ea] bg-white shadow-sm">
+            {conversationNotice ? (
+              <div
+                className="border-b border-[#c7d8e8] bg-[#eef5ff] px-4 py-3 text-lg font-semibold text-[#315b83] sm:px-5"
+                role="status"
+              >
+                {conversationNotice}
+              </div>
+            ) : null}
             {speechMessage ? (
               <div className="border-b border-[#e3e9f0] bg-[#fff8f4] px-4 py-3 sm:px-5">
                 <p className="text-lg font-semibold text-[#a04747]">
@@ -530,6 +683,11 @@ export default function ConversationClient() {
             ) : null}
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-5 sm:px-5">
+              {restoringConversation ? (
+                <p className="rounded-lg border border-[#d7e0ea] bg-[#f9fbfd] px-5 py-4 text-xl text-[#405163]">
+                  今日の会話を読み込んでいます…
+                </p>
+              ) : null}
               {messages.map((message) => {
                 const isAssistant = message.role === "assistant";
 
@@ -600,6 +758,7 @@ export default function ConversationClient() {
                 ref={textareaRef}
                 id="message"
                 value={input}
+                disabled={conversationBusy}
                 onChange={(event) => {
                   setInput(event.target.value);
                   setInputType("text");
@@ -615,7 +774,7 @@ export default function ConversationClient() {
                   onPointerUp={stopListening}
                   onPointerCancel={stopListening}
                   onPointerLeave={stopListening}
-                  disabled={!speechSupported}
+                  disabled={!speechSupported || conversationBusy}
                   aria-pressed={listening}
                   className={`min-h-14 rounded-lg px-4 text-xl font-bold text-white transition disabled:cursor-not-allowed disabled:bg-[#b8c6d6] ${
                     listening
@@ -627,7 +786,7 @@ export default function ConversationClient() {
                 </button>
                 <button
                   type="submit"
-                  disabled={!input.trim() || sending}
+                  disabled={!input.trim() || conversationBusy}
                   className="min-h-14 rounded-lg bg-[#265d8f] px-4 text-xl font-bold text-white transition hover:bg-[#214f79] disabled:cursor-not-allowed disabled:bg-[#b8c6d6]"
                 >
                   送信
@@ -635,6 +794,7 @@ export default function ConversationClient() {
                 <button
                   type="button"
                   onClick={() => setSpeechEnabled((current) => !current)}
+                  disabled={restoringConversation || endingConversation}
                   className={`min-h-14 rounded-lg border px-4 text-xl font-bold transition ${
                     speechEnabled
                       ? "border-[#b86b40] bg-[#fff1e8] text-[#7a3d1e]"
@@ -646,7 +806,8 @@ export default function ConversationClient() {
                 <button
                   type="button"
                   onClick={chooseTopic}
-                  className="min-h-14 rounded-lg border border-[#b8c6d6] bg-white px-4 text-xl font-bold text-[#1d2733] transition hover:bg-[#edf4f1]"
+                  disabled={conversationBusy}
+                  className="min-h-14 rounded-lg border border-[#b8c6d6] bg-white px-4 text-xl font-bold text-[#1d2733] transition hover:bg-[#edf4f1] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   今日の話題
                 </button>
@@ -705,6 +866,20 @@ export default function ConversationClient() {
                   </dd>
                 </div>
               </dl>
+              <button
+                type="button"
+                onClick={() => void endConversation()}
+                disabled={
+                  conversationBusy ||
+                  (!conversationId && messages.length === initialMessages.length)
+                }
+                className="mt-4 min-h-12 w-full rounded-lg border border-[#b88b6b] bg-[#fff8f2] px-4 text-lg font-bold text-[#805236] transition hover:bg-[#fff0e5] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {endingConversation ? "会話を終了しています…" : "今日の会話を終える"}
+              </button>
+              <p className="mt-2 text-sm leading-6 text-[#596a79]">
+                記録は消さず、次に話すときは新しい会話として始めます。
+              </p>
             </section>
 
             {latestDebug ? (

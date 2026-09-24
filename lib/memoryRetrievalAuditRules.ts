@@ -40,7 +40,7 @@ export function validateMemoryRetrievalAudit(
     !["none", "topic_match", "category_browse", "clarification"].includes(audit.finalMode) ||
     !["none", "general_knowledge", "greeting", "current_turn_sufficient", "memory_would_be_unnatural", "no_concrete_topic"].includes(audit.noSearchReason) ||
     !["none", "category_and_topic_unknown", "ambiguous_prior_reference"].includes(audit.clarificationReason) ||
-    (audit.generationRejectionReason !== null && !["too_many_questions", "missing_clarification", "unsupported_memory_claim", "mode_contract_violation", "empty_response", "generation_error"].includes(audit.generationRejectionReason)) ||
+    (audit.generationRejectionReason !== null && !["too_many_questions", "missing_continuation_cue", "missing_clarification", "unsupported_memory_claim", "mode_contract_violation", "empty_response", "generation_error"].includes(audit.generationRejectionReason)) ||
     !["ignore", "exclude", "score"].includes(audit.attributeStrategy)
   ) {
     return "Memory retrieval audit summary is invalid.";

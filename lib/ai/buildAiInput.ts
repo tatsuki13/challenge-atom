@@ -14,10 +14,10 @@ import { SYSTEM_PROMPT } from "./systemPrompt";
 import { getReplyContract, getReplyContractInstructions } from "./replyValidation";
 
 const strategyInstructions: Record<ConversationTurnPlan["listeningStrategy"], string> = {
-  acknowledge: "短く受け止めてください。質問はせず、相手の発話を急かさないでください。",
-  reflect_content: "発話内容を自然に言い換えて返してください。発話にない解釈や事実を足さず、質問はしないでください。",
-  reflect_emotion: "感情を断定しすぎず、穏やかに反映してください。質問はせず、無理に励まさないでください。",
-  show_interest: "発話内の具体的な人物・場所・活動・出来事の一つに、自然な関心を示してください。",
+  acknowledge: "短く受け止めてください。質問で詰めず、受け止めた後に相手が続けられる短い促しを添えてください。",
+  reflect_content: "発話内容を自然に言い換えて返してください。発話にない解釈や事実を足さず、質問または短い促しを一つだけ添えてください。",
+  reflect_emotion: "感情を断定しすぎず、穏やかに反映してください。無理に励まさず、話したければ続けられる余白を添えてください。",
+  show_interest: "発話内の具体的な人物・場所・活動・出来事の一つに自然な関心を示し、もう少し話せる入口を添えてください。",
   ask_open_question: "相手が自由に話を広げられる質問を一つだけ添えてください。答えを限定しすぎないでください。",
   ask_clarification: "意味が曖昧な一点だけを、短い質問で確認してください。推測で補わないでください。",
   allow_silence: "短く受け止め、質問せず、話すことを強制しないでください。完全な無言にはしないでください。",
@@ -98,7 +98,7 @@ function buildTurnPlanInstruction({
     recentAssistantReplies.forEach((reply, index) => {
       lines.push(`- ${index + 1}: ${clipForPrompt(reply, 90)}`);
     });
-    lines.push("- 同じ出だしや同じ質問を続けないでください。");
+    lines.push("- 同じ出だしや同じ質問・促しを続けないでください。");
   }
 
   return lines.join("\n");
@@ -127,7 +127,11 @@ export function buildAiInput({
 }) {
   const recentMessages = messages.slice(-RECENT_MESSAGE_LIMIT);
   const recentAssistantReplies = getRecentAssistantReplies(recentMessages);
-  const replyContract = getReplyContract(memoryMode, memorySelectionRequired);
+  const replyContract = getReplyContract(
+    memoryMode,
+    memorySelectionRequired,
+    turnPlan.listeningStrategy,
+  );
   const input: ResponseInputItem[] = [
     {
       role: "system",

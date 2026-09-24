@@ -1,4 +1,5 @@
-import { DEMO_PROFILE_ID, type MemoryResolutionInput } from "@/lib/conversationTypes";
+import type { MemoryResolutionInput } from "@/lib/conversationTypes";
+import { getCurrentUser } from "@/lib/auth";
 import {
   isMemoryResolutionAction,
   isMemoryResolutionActor,
@@ -14,6 +15,8 @@ export const fetchCache = "force-no-store";
 const noStoreHeaders = { "Cache-Control": "no-store" };
 
 export async function POST(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return Response.json({ error: "authentication_required" }, { status: 401, headers: noStoreHeaders });
   let body: Record<string, unknown>;
   try {
     const parsed = (await request.json()) as unknown;
@@ -25,7 +28,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid JSON body." }, { status: 400, headers: noStoreHeaders });
   }
 
-  if (body.profileId !== undefined && body.profileId !== DEMO_PROFILE_ID) {
+  if (body.profileId !== undefined && body.profileId !== user.profileId) {
     return Response.json(
       { error: "Profile is not available.", reasonCode: "profile_mismatch" },
       { status: 403, headers: noStoreHeaders },
@@ -50,7 +53,7 @@ export async function POST(request: Request) {
   }
 
   const input: MemoryResolutionInput = {
-    profileId: DEMO_PROFILE_ID,
+    profileId: user.profileId,
     candidateId: body.candidateId,
     action: body.action,
     actor: body.actor,

@@ -23,9 +23,16 @@ function MetricBlock({
   );
 }
 
-export default function DashboardClient() {
+export default function DashboardClient({
+  conversationId,
+}: {
+  conversationId?: string;
+}) {
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const conversationQuery = conversationId
+    ? `?conversationId=${encodeURIComponent(conversationId)}`
+    : "";
 
   const loadMetrics = useCallback(async () => {
     try {
@@ -82,13 +89,13 @@ export default function DashboardClient() {
               更新
             </button>
             <Link
-              href="/memory"
+              href={`/memory${conversationQuery}`}
               className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#8eb5a6] bg-[#edf7f2] px-5 text-lg font-semibold text-[#285747] transition hover:bg-[#dcefe7]"
             >
               記憶を確認する
             </Link>
             <Link
-              href="/"
+              href={`/${conversationQuery}`}
               className="inline-flex min-h-12 items-center justify-center rounded-lg bg-[#265d8f] px-5 text-lg font-semibold text-white transition hover:bg-[#214f79]"
             >
               会話に戻る

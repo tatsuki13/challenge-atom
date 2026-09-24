@@ -1,4 +1,5 @@
 import type {
+  ListeningStrategy,
   MemoryPromptContext,
   MemoryRetrievalMode,
   ReplyRejectionReason,
@@ -8,6 +9,7 @@ export type ReplyContract = {
   mode: MemoryRetrievalMode | "safety";
   memoryRole: "none" | "answer_context" | "candidate_presentation" | "clarification" | "safety";
   maximumQuestions: number | null;
+  requiresContinuationCue: boolean;
   requiresClarificationIntent: boolean;
   mayUseConfirmedMemory: boolean;
 };
@@ -16,6 +18,7 @@ export type ReplyValidationInput = {
   text: string;
   memoryMode: MemoryRetrievalMode | "safety";
   memorySelectionRequired?: boolean;
+  listeningStrategy?: ListeningStrategy | null;
   memories?: MemoryPromptContext[];
   currentUserMessage: string;
 };
@@ -29,12 +32,14 @@ export type ReplyValidationResult = {
 export function getReplyContract(
   mode: MemoryRetrievalMode | "safety",
   memorySelectionRequired = false,
+  listeningStrategy: ListeningStrategy | null = null,
 ): ReplyContract {
-  if (mode === "safety") return { mode, memoryRole: "safety", maximumQuestions: null, requiresClarificationIntent: false, mayUseConfirmedMemory: false };
-  if (mode === "clarification") return { mode, memoryRole: "clarification", maximumQuestions: 1, requiresClarificationIntent: true, mayUseConfirmedMemory: false };
-  if (mode === "category_browse") return { mode, memoryRole: "candidate_presentation", maximumQuestions: 1, requiresClarificationIntent: memorySelectionRequired, mayUseConfirmedMemory: true };
-  if (mode === "topic_match") return { mode, memoryRole: "answer_context", maximumQuestions: 1, requiresClarificationIntent: false, mayUseConfirmedMemory: true };
-  return { mode, memoryRole: "none", maximumQuestions: 1, requiresClarificationIntent: false, mayUseConfirmedMemory: false };
+  const requiresContinuationCue = listeningStrategy !== "allow_silence";
+  if (mode === "safety") return { mode, memoryRole: "safety", maximumQuestions: null, requiresContinuationCue: false, requiresClarificationIntent: false, mayUseConfirmedMemory: false };
+  if (mode === "clarification") return { mode, memoryRole: "clarification", maximumQuestions: 1, requiresContinuationCue: true, requiresClarificationIntent: true, mayUseConfirmedMemory: false };
+  if (mode === "category_browse") return { mode, memoryRole: "candidate_presentation", maximumQuestions: 1, requiresContinuationCue, requiresClarificationIntent: memorySelectionRequired, mayUseConfirmedMemory: true };
+  if (mode === "topic_match") return { mode, memoryRole: "answer_context", maximumQuestions: 1, requiresContinuationCue, requiresClarificationIntent: false, mayUseConfirmedMemory: true };
+  return { mode, memoryRole: "none", maximumQuestions: 1, requiresContinuationCue, requiresClarificationIntent: false, mayUseConfirmedMemory: false };
 }
 
 export function getReplyContractInstructions(contract: ReplyContract) {
@@ -44,18 +49,21 @@ export function getReplyContractInstructions(contract: ReplyContract) {
     contract.maximumQuestions === null
       ? "- Follow the existing safety response without applying normal-conversation question limits."
       : "- A user-facing question is optional and there may be at most one independent question or request for clarification.",
+    contract.requiresContinuationCue
+      ? "- After acknowledging the user, leave exactly one natural opening for them to continue: either one question or one brief non-question invitation. Do not end with acknowledgement alone."
+      : "- A continuation prompt is not required. Do not pressure the user to keep talking.",
   ];
   if (contract.mode === "none") return [...lines, "- Give a normal conversational response and do not imply that any prior memory was used."];
   if (contract.mode === "topic_match") return [...lines,
     "- Use only selected confirmed memories relevant to the current message; do not list or unnaturally repeat them.",
-    "- A follow-up question is optional even when the conversation plan suggests one.",
+    "- A follow-up question is optional; a brief invitation to continue may be used instead.",
     "- Do not add a remembered fact absent from the supplied memory context.",
   ];
   if (contract.mode === "category_browse") return [...lines,
     "- Present only the supplied candidates, briefly and without adding another remembered fact.",
     contract.requiresClarificationIntent
       ? "- Several candidates exist: end with one selection question or one clear selection request."
-      : "- With a small candidate set, a follow-up question is optional.",
+      : "- With a small candidate set, leave one brief question or invitation after presenting it.",
     "- Candidate list items are statements, not separate questions.",
   ];
   return [...lines,
@@ -88,6 +96,11 @@ export function countQuestions(text: string) {
 
 function hasClarificationIntent(text: string, questionCount: number) {
   return questionCount > 0 || /(?:教えて(?:ください|もらえ)|確認させて|お聞かせください|どれ|どのこと|どの話題|もう少し具体的|選んでください)/u.test(text);
+}
+
+export function hasContinuationCue(text: string, questionCount = countQuestions(text)) {
+  if (questionCount > 0) return true;
+  return /(?:教えて(?:ください|もらえ)|聞かせて(?:ください|もらえ)|話して(?:ください|もらえ)|お聞かせください|続けて(?:ください|もらえ)|話しやすいところから|思い浮かぶことがあれば|よければ|差し支えなければ|気が向いたら|話したくなったら|続けたくなったら|聞いてみたい|気になります|話はいかがでしょう|思い浮かぶもの)/u.test(text);
 }
 
 function normalizeClaimText(text: string) {
@@ -137,7 +150,7 @@ function contradictsCurrentUtterance(text: string, currentUserMessage: string) {
 export function validateReplyAgainstContract(input: ReplyValidationInput): ReplyValidationResult {
   const text = input.text.normalize("NFKC").trim();
   if (!text) return { accepted: false, reason: "empty_response", questionCount: 0 };
-  const contract = getReplyContract(input.memoryMode, input.memorySelectionRequired);
+  const contract = getReplyContract(input.memoryMode, input.memorySelectionRequired, input.listeningStrategy);
   if (contract.mode === "safety") return { accepted: true, reason: null, questionCount: countQuestions(text) };
   const questionCount = countQuestions(text);
   if (contract.maximumQuestions !== null && questionCount > contract.maximumQuestions) return { accepted: false, reason: "too_many_questions", questionCount };
@@ -148,5 +161,6 @@ export function validateReplyAgainstContract(input: ReplyValidationInput): Reply
   ) return { accepted: false, reason: "unsupported_memory_claim", questionCount };
   if (contract.requiresClarificationIntent && !hasClarificationIntent(text, questionCount)) return { accepted: false, reason: "missing_clarification", questionCount };
   if (contradictsCurrentUtterance(text, input.currentUserMessage)) return { accepted: false, reason: "mode_contract_violation", questionCount };
+  if (contract.requiresContinuationCue && !hasContinuationCue(text, questionCount)) return { accepted: false, reason: "missing_continuation_cue", questionCount };
   return { accepted: true, reason: null, questionCount };
 }

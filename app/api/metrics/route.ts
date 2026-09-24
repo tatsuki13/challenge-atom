@@ -1,4 +1,5 @@
 import { getTodayMetrics } from "@/lib/conversationStore";
+import { getCurrentUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +13,11 @@ const noStoreHeaders = {
 };
 
 export async function GET() {
-  const metrics = await getTodayMetrics();
+  const user = await getCurrentUser();
+  if (!user) {
+    return Response.json({ error: "authentication_required" }, { status: 401, headers: noStoreHeaders });
+  }
+  const metrics = await getTodayMetrics(user.profileId);
 
   return Response.json(metrics, {
     headers: noStoreHeaders,
