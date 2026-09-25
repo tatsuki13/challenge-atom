@@ -27,13 +27,16 @@ model Profile {
 
 model User {
   id           String    @id @default(cuid())
-  email        String    @unique
+  nameKey      String
+  birthDate    DateTime  @db.Date
   passwordHash String
   profileId    String    @unique
   profile      Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
   sessions     Session[]
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+
+  @@unique([nameKey, birthDate])
 }
 
 model Session {

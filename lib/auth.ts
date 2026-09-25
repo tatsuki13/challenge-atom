@@ -15,10 +15,13 @@ const SCRYPT_KEY_LENGTH = 64;
 
 export type AuthenticatedUser = {
   id: string;
-  email: string;
   profileId: string;
   displayName: string;
 };
+
+export function normalizeName(name: string) {
+  return name.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("ja");
+}
 
 function scrypt(password: string, salt: string) {
   return new Promise<Buffer>((resolve, reject) => {
@@ -92,7 +95,6 @@ export async function getCurrentUser(): Promise<AuthenticatedUser | null> {
       user: {
         select: {
           id: true,
-          email: true,
           profileId: true,
           profile: { select: { displayName: true } },
         },
@@ -103,7 +105,6 @@ export async function getCurrentUser(): Promise<AuthenticatedUser | null> {
   if (!session || session.expiresAt <= new Date()) return null;
   return {
     id: session.user.id,
-    email: session.user.email,
     profileId: session.user.profileId,
     displayName: session.user.profile.displayName,
   };

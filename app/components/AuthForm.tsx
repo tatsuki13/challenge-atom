@@ -20,30 +20,27 @@ export default function AuthForm({ mode, action }: Props) {
         <h1 className="mt-3 text-3xl font-bold">{signupMode ? "アカウント作成" : "ログイン"}</h1>
         <p className="mt-3 leading-7 text-[#596a79]">
           {signupMode
-            ? "あなた専用の会話と記憶を安全に分けて保存します。"
-            : "登録したアカウントで続きから利用できます。"}
+            ? "お名前と生年月日で、あなた専用のアカウントを作成します。"
+            : "登録したお名前と生年月日を入力してください。"}
         </p>
 
         <form action={formAction} className="mt-7 space-y-5">
-          {signupMode ? (
-            <label className="block font-bold">
-              お名前
-              <input
-                name="displayName"
-                autoComplete="name"
-                maxLength={50}
-                required
-                className="mt-2 min-h-12 w-full rounded-lg border border-[#aebdcc] px-4 text-lg font-normal"
-              />
-            </label>
-          ) : null}
           <label className="block font-bold">
-            メールアドレス
+            お名前
             <input
-              name="email"
-              type="email"
-              autoComplete="email"
-              maxLength={254}
+              name="displayName"
+              autoComplete="name"
+              maxLength={50}
+              required
+              className="mt-2 min-h-12 w-full rounded-lg border border-[#aebdcc] px-4 text-lg font-normal"
+            />
+          </label>
+          <label className="block font-bold">
+            生年月日
+            <input
+              name="birthDate"
+              type="date"
+              min="1900-01-01"
               required
               className="mt-2 min-h-12 w-full rounded-lg border border-[#aebdcc] px-4 text-lg font-normal"
             />

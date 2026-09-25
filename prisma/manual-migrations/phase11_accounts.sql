@@ -1,6 +1,7 @@
 CREATE TABLE "User" (
   "id" TEXT NOT NULL,
-  "email" TEXT NOT NULL,
+  "nameKey" TEXT NOT NULL,
+  "birthDate" DATE NOT NULL,
   "passwordHash" TEXT NOT NULL,
   "profileId" TEXT NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -17,7 +18,7 @@ CREATE TABLE "Session" (
   CONSTRAINT "Session_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
+CREATE UNIQUE INDEX "User_nameKey_birthDate_key" ON "User"("nameKey", "birthDate");
 CREATE UNIQUE INDEX "User_profileId_key" ON "User"("profileId");
 CREATE UNIQUE INDEX "Session_tokenHash_key" ON "Session"("tokenHash");
 CREATE INDEX "Session_userId_idx" ON "Session"("userId");
