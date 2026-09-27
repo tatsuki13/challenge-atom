@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:memory": "node --experimental-strip-types --test tests/memoryRetrieval.test.mjs tests/memoryRetrievalEvaluation.test.mjs tests/memoryManagement.test.mjs tests/replyValidation.test.mjs",
+    "test:wellbeing": "node --experimental-strip-types --test tests/wellbeing.test.mjs tests/googleHealthParsing.test.mjs",
     "evaluate:memory": "node --experimental-strip-types scripts/evaluateMemoryRetrieval.mjs",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",

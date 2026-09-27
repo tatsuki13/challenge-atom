@@ -17,6 +17,7 @@ model Profile {
   conversations      Conversation[]
   dailyMetrics       DailyMetric[]
   healthSamples      HealthSample[]
+  healthConnection   HealthConnection?
   riskEvents         RiskEvent[]
   memoryCandidates   MemoryCandidate[]
   memories           Memory[]
@@ -383,6 +384,20 @@ model HealthSample {
 
   @@unique([profileId, date, source])
   @@index([profileId, date])
+}
+
+model HealthConnection {
+  id                    String   @id @default(cuid())
+  profileId             String   @unique
+  profile               Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  provider              String   @default("google_health")
+  accessTokenEncrypted  String
+  refreshTokenEncrypted String
+  expiresAt             DateTime
+  scopes                String
+  lastSyncedAt          DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }
 
 model RiskEvent {

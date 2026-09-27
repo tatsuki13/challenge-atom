@@ -11,6 +11,7 @@ import type {
   MetricsSummary,
   RiskLevel,
 } from "@/lib/conversationTypes";
+import type { EmotionScores, PhysicalSignals } from "@/lib/wellbeing";
 
 type ChatMessage = {
   id: string;
@@ -47,6 +48,9 @@ type ChatResponse = {
   reply: string;
   conversationId: string;
   emotionLabel: EmotionLabel;
+  emotionScores: EmotionScores;
+  physicalSignals: PhysicalSignals | null;
+  conversationSuggestion: string;
   riskLevel: RiskLevel;
   usedMock: boolean;
   userMessageId: string;
@@ -210,8 +214,14 @@ export default function ConversationClient({
   const [endingConversation, setEndingConversation] = useState(false);
   const [conversationNotice, setConversationNotice] = useState<string | null>(null);
   const [topicIndex, setTopicIndex] = useState(0);
+  const [interestTopics, setInterestTopics] = useState<string[]>([]);
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
   const [latestDebug, setLatestDebug] = useState<ConversationDebug | null>(null);
+  const [healthStatus, setHealthStatus] = useState<{ configured: boolean; connected: boolean; lastSyncedAt: string | null } | null>(null);
+  const [healthSignals, setHealthSignals] = useState<PhysicalSignals | null>(null);
+  const [healthBusy, setHealthBusy] = useState(false);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [wellbeing, setWellbeing] = useState<Pick<ChatResponse, "emotionScores" | "physicalSignals" | "conversationSuggestion"> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -239,12 +249,34 @@ export default function ConversationClient({
     }
   }, []);
 
+  const refreshHealth = useCallback(async () => {
+    try {
+      const [statusResponse, signalsResponse] = await Promise.all([
+        fetch("/api/health/google", { cache: "no-store" }),
+        fetch("/api/health", { cache: "no-store" }),
+      ]);
+      if (statusResponse.ok) setHealthStatus(await statusResponse.json());
+      if (signalsResponse.ok) setHealthSignals(await signalsResponse.json());
+    } catch {
+      setHealthError("Pixel Watch の情報を確認できませんでした。");
+    }
+  }, []);
+
   useEffect(() => {
     const supportTimer = window.setTimeout(() => {
+      const healthResult = new URLSearchParams(window.location.search).get("health");
+      if (healthResult === "state_error" || healthResult === "connection_error") {
+        setHealthError("Google Health に接続できませんでした。設定を確認して再度お試しください。");
+      }
       setSpeechSupported(
         Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
       );
       void refreshMetrics();
+      void refreshHealth();
+      void fetch("/api/topics", { cache: "no-store" })
+        .then((response) => response.ok ? response.json() : { topics: [] })
+        .then((data: { topics?: string[] }) => setInterestTopics(Array.isArray(data.topics) ? data.topics : []))
+        .catch(() => setInterestTopics([]));
     }, 0);
 
     return () => {
@@ -254,7 +286,35 @@ export default function ConversationClient({
         window.speechSynthesis.cancel();
       }
     };
-  }, [refreshMetrics]);
+  }, [refreshMetrics, refreshHealth]);
+
+  async function syncHealth() {
+    setHealthBusy(true);
+    setHealthError(null);
+    try {
+      const response = await fetch("/api/health/google", { method: "POST", cache: "no-store" });
+      if (!response.ok) throw new Error("sync_failed");
+      await refreshHealth();
+    } catch {
+      setHealthError("同期できませんでした。スマートウォッチと Google Health の同期状態を確認してください。");
+    } finally {
+      setHealthBusy(false);
+    }
+  }
+
+  async function disconnectHealth() {
+    setHealthBusy(true);
+    setHealthError(null);
+    try {
+      const response = await fetch("/api/health/google", { method: "DELETE", cache: "no-store" });
+      if (!response.ok) throw new Error("disconnect_failed");
+      await refreshHealth();
+    } catch {
+      setHealthError("接続を解除できませんでした。");
+    } finally {
+      setHealthBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (
@@ -538,9 +598,14 @@ export default function ConversationClient({
         { scroll: false },
       );
       setLatestDebug(data.debug ?? null);
+      setWellbeing({ emotionScores: data.emotionScores, physicalSignals: data.physicalSignals, conversationSuggestion: data.conversationSuggestion });
       setMessages((current) => [...current, assistantMessage]);
       speak(data.reply);
       void refreshMetrics();
+      void fetch("/api/topics", { cache: "no-store" })
+        .then((response) => response.ok ? response.json() : { topics: [] })
+        .then((data: { topics?: string[] }) => setInterestTopics(Array.isArray(data.topics) ? data.topics : []))
+        .catch(() => {});
     } catch {
       const fallbackMessage: ChatMessage = {
         id: createClientId(),
@@ -570,7 +635,11 @@ export default function ConversationClient({
       return;
     }
 
-    const nextTopic = topics[topicIndex % topics.length];
+    const availableTopics = [
+      ...interestTopics.map((topic) => `${topic}のこと`),
+      ...topics,
+    ];
+    const nextTopic = availableTopics[topicIndex % availableTopics.length];
     setTopicIndex((current) => current + 1);
     setInput("");
     await submitMessage({
@@ -621,6 +690,7 @@ export default function ConversationClient({
       setMoodScore(null);
       setSpeechMessage("");
       setLatestDebug(null);
+      setWellbeing(null);
       setTopicIndex(0);
       setConversationNotice(
         "今日の会話を記録して終了しました。新しい会話を始められます。",
@@ -821,6 +891,49 @@ export default function ConversationClient({
           </div>
 
           <aside className="space-y-5">
+            <section className="rounded-lg border border-[#d7e0ea] bg-white p-5 shadow-sm">
+              <h2 className="text-2xl font-bold">Pixel Watch</h2>
+              <p className="mt-2 text-base text-[#405163]">
+                {healthStatus?.connected ? "Google Health と接続中" : "Google Health は未接続"}
+              </p>
+              {healthStatus?.connected ? (
+                <>
+                  <p className="mt-2 text-base leading-7">
+                    睡眠 {healthSignals?.sleepMinutes ?? "未取得"} 分 ・歩数 {healthSignals?.steps ?? "未取得"} 歩 ・安静時心拍 {healthSignals?.restingHeartRate ?? "未取得"} 回/分
+                  </p>
+                  <button type="button" onClick={() => void syncHealth()} disabled={healthBusy} className="mt-3 min-h-12 w-full rounded-lg bg-[#265d8f] px-4 text-lg font-semibold text-white disabled:opacity-50">{healthBusy ? "同期中…" : "今すぐ同期"}</button>
+                  <button type="button" onClick={() => void disconnectHealth()} disabled={healthBusy} className="mt-2 min-h-10 w-full text-base text-[#805236] underline disabled:opacity-50">接続を解除</button>
+                </>
+              ) : healthStatus?.configured ? (
+                <a href="/api/health/google/connect" className="mt-3 flex min-h-12 items-center justify-center rounded-lg bg-[#265d8f] px-4 text-lg font-semibold text-white">Google Health と接続</a>
+              ) : null}
+              {healthStatus && !healthStatus.configured ? <p className="mt-2 text-sm">Google Health API の設定が必要です。</p> : null}
+              {healthError ? <p className="mt-2 text-sm text-[#a04747]" role="alert">{healthError}</p> : null}
+            </section>
+            {wellbeing ? (
+              <section className="rounded-lg border border-[#d7e0ea] bg-white p-5 shadow-sm">
+                <h2 className="text-2xl font-bold">会話の参考値</h2>
+                <p className="mt-2 text-sm text-[#596a79]">感情は発話からの推定値です。</p>
+                <dl className="mt-3 grid grid-cols-2 gap-2 text-base">
+                  {([
+                    ["孤独感", wellbeing.emotionScores.loneliness],
+                    ["不安", wellbeing.emotionScores.anxiety],
+                    ["楽しさ", wellbeing.emotionScores.positive_affect],
+                    ["関心", wellbeing.emotionScores.interest],
+                  ] as const).map(([label, value]) => (
+                    <div key={label} className="rounded bg-[#f6f8fb] p-2"><dt>{label}</dt><dd className="font-bold">{value.toFixed(2)}</dd></div>
+                  ))}
+                </dl>
+                {wellbeing.physicalSignals ? (
+                  <p className="mt-3 text-sm leading-6">
+                    睡眠 {wellbeing.physicalSignals.sleepMinutes ?? "未取得"} 分 ・
+                    歩数 {wellbeing.physicalSignals.steps ?? "未取得"} 歩 ・
+                    安静時心拍 {wellbeing.physicalSignals.restingHeartRate ?? "未取得"} 回/分
+                  </p>
+                ) : <p className="mt-3 text-sm">身体データは未取得です。</p>}
+                <p className="mt-2 text-sm">会話方針: {wellbeing.conversationSuggestion}</p>
+              </section>
+            ) : null}
             <section className="rounded-lg border border-[#d7e0ea] bg-white p-5 shadow-sm">
               <h2 className="text-2xl font-bold text-[#1d2733]">
                 今日の気分
