@@ -13,6 +13,7 @@ import {
 } from "./demoStore";
 import { MEMORY_EXTRACTION_VERSION } from "./ai/memoryExtraction";
 import { getPrismaClient } from "./prisma";
+import type { EmotionScores } from "./wellbeing";
 import { validateMemoryRetrievalAudit } from "./memoryRetrievalAuditRules";
 import {
   DEMO_PROFILE_ID,
@@ -218,6 +219,7 @@ export async function recordUserMessage({
   clientMessageId,
   moodScore,
   emotionLabel,
+  emotionScores,
   riskLevel,
 }: {
   profileId?: string;
@@ -228,6 +230,7 @@ export async function recordUserMessage({
   clientMessageId: string | null;
   moodScore: number | null;
   emotionLabel: EmotionLabel;
+  emotionScores?: EmotionScores;
   riskLevel: RiskLevel;
 }): Promise<{
   conversationId: string;
@@ -298,6 +301,7 @@ export async function recordUserMessage({
           inputType,
           clientMessageId,
           emotionLabel,
+          emotionScores,
           riskLevel,
         },
       });

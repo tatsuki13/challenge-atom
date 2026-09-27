@@ -16,6 +16,7 @@ model Profile {
   updatedAt          DateTime          @updatedAt
   conversations      Conversation[]
   dailyMetrics       DailyMetric[]
+  healthSamples      HealthSample[]
   riskEvents         RiskEvent[]
   memoryCandidates   MemoryCandidate[]
   memories           Memory[]
@@ -77,6 +78,7 @@ model Message {
   role             String
   content          String
   emotionLabel     String?
+  emotionScores    Json?
   riskLevel        String                    @default("none")
   rawContent       String?
   inputType        String                    @default("text")
@@ -364,6 +366,23 @@ model DailyMetric {
   updatedAt             DateTime @updatedAt
 
   @@unique([profileId, date])
+}
+
+model HealthSample {
+  id               String   @id @default(cuid())
+  profileId        String
+  profile          Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  date             DateTime
+  sleepMinutes     Int?
+  steps            Int?
+  restingHeartRate Int?
+  source           String
+  recordedAt       DateTime
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([profileId, date, source])
+  @@index([profileId, date])
 }
 
 model RiskEvent {
