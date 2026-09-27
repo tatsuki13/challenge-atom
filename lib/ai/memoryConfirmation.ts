@@ -9,7 +9,7 @@ export type PendingMemoryConfirmation = {
 };
 
 const confirmationQuestionPattern =
-  /^「(.+)」ということですね。今後の会話のために覚えておいてもよいですか[？?]$/;
+  /「([^」]{1,240})」[\s\S]{0,120}覚えておいても(?:よい|いい)ですか[？?]/;
 
 const rejectionPattern =
   /^(?:いいえ|いえ|いや|だめ|駄目|違います|そうではありません|覚えないで|記憶しないで)/;

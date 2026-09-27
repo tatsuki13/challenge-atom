@@ -8,6 +8,24 @@ type ReplySet = {
 };
 
 const focusReplies: Record<string, ReplySet> = {
+  花: {
+    chat: [
+      "花が咲いたんですね。庭の景色が少し変わりますね。",
+      "花が開いたんですね。咲いている姿が目に浮かぶようです。",
+    ],
+    ask: [
+      "花が咲いたんですね。どんな花ですか？",
+    ],
+  },
+  家族: {
+    chat: [
+      "ご家族のことなんですね。今のお話、聞いています。",
+      "ご家族のことが話に出てきたんですね。",
+    ],
+    ask: [
+      "ご家族のことなんですね。もう少しお話ししますか？",
+    ],
+  },
   先生: {
     chat: [
       "先生とたくさん話されたんですね。話せる相手がいる時間って、少し気持ちがほどけますね。",
@@ -206,10 +224,12 @@ const strategyReplies: Record<ConversationTurnPlan["listeningStrategy"], ReplySe
   },
   change_topic: {
     chat: [
-      "では、少し話題を変えてみましょう。最近目に留まったものの話はいかがでしょう。",
-      "それでは別のお話にしましょう。季節のことで思い浮かぶものを一つ置いておきますね。",
+      "分かりました。今のお話はここまでにしておきますね。",
+      "分かりました。話題を変えたいということ、受け取りました。",
     ],
-    ask: [],
+    ask: [
+      "分かりました。次はどんなお話にしますか？",
+    ],
   },
 };
 
@@ -434,6 +454,7 @@ export function createMockReply({
     memoryMode,
     memorySelectionRequired,
     turnPlan.listeningStrategy,
+    turnPlan.questionPolicy,
   );
   const finish = (text: string) =>
     replyContract.requiresContinuationCue && !hasContinuationCue(text)
@@ -457,8 +478,23 @@ export function createMockReply({
 
   if (topicStarter && topicTitle) {
     return finish(turnPlan.shouldAskQuestion
-      ? `それでは今回は「${topicTitle}」でお話ししましょう。まず、そのことでぱっと思い浮かぶことはありますか？`
-      : `それでは今回は「${topicTitle}」のお話にしましょう。思い浮かぶことがあれば、いつでも聞かせてください。`);
+      ? `「${topicTitle}」について、今お話ししたいことはありますか？`
+      : `「${topicTitle}」のお話ですね。思い浮かぶことをそのまま聞いています。`);
+  }
+
+  if (
+    turnPlan.conversationSignals.topicChangeRequested &&
+    !turnPlan.conversationSignals.topicChangeTargetProvided
+  ) {
+    return "分かりました。次はどんなお話にしますか？";
+  }
+
+  if (turnPlan.conversationSignals.lowEnergyStatement) {
+    return "今日はだるさがあるんですね。今、少しお話しできそうですか？";
+  }
+
+  if (turnPlan.conversationSignals.proposalRejected) {
+    return "分かりました。その案はいったんここまでにしますね。";
   }
 
   if (turnPlan.shouldAskQuestion && turnPlan.suggestedQuestion) {

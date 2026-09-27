@@ -31,6 +31,9 @@ type ConversationDebug = {
   focusTerms: string[];
   eventType: string;
   topicType: string;
+  responsePurpose: string;
+  questionPolicy: string;
+  conversationSignals?: Record<string, unknown> | null;
   shouldAskQuestion: boolean;
   suggestedQuestion?: string | null;
   topicStarter: boolean;
@@ -200,6 +203,7 @@ export default function ConversationClient({
   );
   const [moodScore, setMoodScore] = useState<number | null>(null);
   const [speechEnabled, setSpeechEnabled] = useState(false);
+  const [avatarSpeaking, setAvatarSpeaking] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [speechMessage, setSpeechMessage] = useState("");
   const [listening, setListening] = useState(false);
@@ -219,6 +223,7 @@ export default function ConversationClient({
   const transcriptBaseRef = useRef("");
   const finalTranscriptRef = useRef("");
   const restoredConversationIdRef = useRef<string | null>(null);
+  const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   const conversationQuery = conversationId
     ? `?conversationId=${encodeURIComponent(conversationId)}`
@@ -251,6 +256,7 @@ export default function ConversationClient({
       window.clearTimeout(supportTimer);
       recognitionRef.current?.stop();
       if ("speechSynthesis" in window) {
+        activeUtteranceRef.current = null;
         window.speechSynthesis.cancel();
       }
     };
@@ -318,19 +324,45 @@ export default function ConversationClient({
 
   useEffect(() => {
     if (!speechEnabled && "speechSynthesis" in window) {
+      activeUtteranceRef.current = null;
       window.speechSynthesis.cancel();
     }
   }, [speechEnabled]);
+
+  function toggleSpeech() {
+    if (speechEnabled && "speechSynthesis" in window) {
+      activeUtteranceRef.current = null;
+      setAvatarSpeaking(false);
+      window.speechSynthesis.cancel();
+    }
+    setSpeechEnabled((current) => !current);
+  }
 
   function speak(text: string) {
     if (!speechEnabled || !("speechSynthesis" in window)) {
       return;
     }
 
+    activeUtteranceRef.current = null;
+    setAvatarSpeaking(false);
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "ja-JP";
     utterance.rate = 0.9;
+    utterance.onstart = () => {
+      if (activeUtteranceRef.current === utterance) {
+        setAvatarSpeaking(true);
+      }
+    };
+    const finishSpeaking = () => {
+      if (activeUtteranceRef.current === utterance) {
+        activeUtteranceRef.current = null;
+        setAvatarSpeaking(false);
+      }
+    };
+    utterance.onend = finishSpeaking;
+    utterance.onerror = finishSpeaking;
+    activeUtteranceRef.current = utterance;
     window.speechSynthesis.speak(utterance);
   }
 
@@ -611,6 +643,8 @@ export default function ConversationClient({
 
       recognitionRef.current?.stop();
       if ("speechSynthesis" in window) {
+        activeUtteranceRef.current = null;
+        setAvatarSpeaking(false);
         window.speechSynthesis.cancel();
       }
       restoredConversationIdRef.current = null;
@@ -635,6 +669,15 @@ export default function ConversationClient({
       setEndingConversation(false);
     }
   }
+
+  const latestAssistantMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant") ?? initialMessages[0];
+  const avatarMessage = restoringConversation
+    ? "今日の会話を読み込んでいます…"
+    : sending
+      ? "今のお話を受け止めています…"
+      : latestAssistantMessage.text;
 
   return (
     <main className="min-h-screen bg-[#f6f8fb] text-[#1d2733]">
@@ -665,7 +708,7 @@ export default function ConversationClient({
         </header>
 
         <section className="grid min-h-0 flex-1 gap-5 py-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="flex h-[calc(100vh-9rem)] min-h-[620px] flex-col overflow-hidden rounded-lg border border-[#d7e0ea] bg-white shadow-sm">
+          <div className="flex min-h-[720px] flex-col overflow-hidden rounded-lg border border-[#d7e0ea] bg-white shadow-sm">
             {conversationNotice ? (
               <div
                 className="border-b border-[#c7d8e8] bg-[#eef5ff] px-4 py-3 text-lg font-semibold text-[#315b83] sm:px-5"
@@ -682,67 +725,85 @@ export default function ConversationClient({
               </div>
             ) : null}
 
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-5 sm:px-5">
-              {restoringConversation ? (
-                <p className="rounded-lg border border-[#d7e0ea] bg-[#f9fbfd] px-5 py-4 text-xl text-[#405163]">
-                  今日の会話を読み込んでいます…
-                </p>
-              ) : null}
-              {messages.map((message) => {
-                const isAssistant = message.role === "assistant";
+            <section className="flex min-h-[330px] flex-1 flex-col items-center justify-center bg-[radial-gradient(circle_at_center,_#f1fbf7_0%,_#ffffff_68%)] px-5 py-8 text-center sm:px-8">
+              <div
+                className="conversation-avatar"
+                data-speaking={avatarSpeaking}
+                data-thinking={sending || restoringConversation}
+                aria-label={avatarSpeaking ? "ATOMが話しています" : "ATOM"}
+              >
+                <PetAvatar mood={getAvatarMood(latestAssistantMessage)} />
+              </div>
+              <p className="mt-5 text-base font-bold tracking-[0.18em] text-[#3b7f6a]">
+                ATOM
+              </p>
+              <div
+                className="conversation-speech mt-3 w-full max-w-2xl rounded-2xl border border-[#c7ddd4] bg-white px-5 py-4 text-xl leading-8 text-[#1d3a32] shadow-sm sm:px-7 sm:text-2xl sm:leading-10"
+                role="status"
+                aria-live="polite"
+                aria-busy={sending || restoringConversation}
+              >
+                {avatarMessage}
+              </div>
+            </section>
 
-                return (
-                  <article
-                    key={message.id}
-                    className={`flex gap-3 ${
-                      isAssistant ? "items-start" : "justify-end"
-                    }`}
+            <details className="conversation-log group border-t border-[#dfe6ee] bg-white">
+              <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-lg font-bold text-[#1d2733] transition hover:bg-[#f4f8f6] focus-visible:outline focus-visible:outline-4 focus-visible:outline-[#cfe8df] sm:px-5 [&::-webkit-details-marker]:hidden">
+                <span>対話ログ</span>
+                <span className="flex items-center gap-3 text-base font-semibold text-[#596a79]">
+                  {messages.length}件
+                  <span
+                    className="text-2xl leading-none transition-transform group-open:rotate-180"
+                    aria-hidden="true"
                   >
-                    {isAssistant ? (
-                      <PetAvatar mood={getAvatarMood(message)} />
-                    ) : null}
-                    <div
-                      className={`max-w-[82%] rounded-lg px-5 py-4 text-xl leading-8 shadow-sm ${
-                        isAssistant
-                          ? "border border-[#d5e3dd] bg-[#edf7f2] text-[#1d3a32]"
-                          : "bg-[#265d8f] text-white"
-                      }`}
+                    ⌄
+                  </span>
+                </span>
+              </summary>
+              <div className="max-h-80 space-y-4 overflow-y-auto overscroll-contain border-t border-[#e7edf2] bg-[#f9fbfd] px-4 py-5 sm:px-5">
+                {messages.map((message) => {
+                  const isAssistant = message.role === "assistant";
+
+                  return (
+                    <article
+                      key={message.id}
+                      className={`flex ${isAssistant ? "justify-start" : "justify-end"}`}
                     >
-                      <p className="mb-1 text-base font-bold">
-                        {isAssistant ? "聞き手" : "あなた"}
-                      </p>
-                      <p>{message.text}</p>
-                      {message.debug ? (
-                        <p className="mt-3 border-t border-[#bfd7cc] pt-2 text-sm leading-6 text-[#4d6a60]">
-                          制御: {message.debug.usedMock ? "mock" : "OpenAI"} / plan:{" "}
-                          {message.debug.planSource ?? "local"} / focus:{" "}
-                          {message.debug.mainFocus ?? "なし"} / event:{" "}
-                          {message.debug.eventType} / topic:{" "}
-                          {message.debug.topicType} / strategy:{" "}
-                          {message.debug.listeningStrategy ?? "safety"} / generation:{" "}
-                          {message.debug.generationSource}
-                          <br />
-                          記憶候補: {message.debug.memoryExtraction.status} / 件数:{" "}
-                          {message.debug.memoryExtraction.candidateCount} / category:{" "}
-                          {message.debug.memoryExtraction.categories.join(", ") || "なし"} / 除外:{" "}
-                          {message.debug.memoryExtraction.rejectedCount} / reason:{" "}
-                          {message.debug.memoryExtraction.rejectionReasonCodes.join(", ") || "なし"}
+                      <div
+                        className={`max-w-[88%] rounded-lg px-4 py-3 text-lg leading-7 shadow-sm ${
+                          isAssistant
+                            ? "border border-[#d5e3dd] bg-white text-[#1d3a32]"
+                            : "bg-[#265d8f] text-white"
+                        }`}
+                      >
+                        <p className="mb-1 text-sm font-bold">
+                          {isAssistant ? "ATOM" : "あなた"}
                         </p>
-                      ) : null}
-                    </div>
-                  </article>
-                );
-              })}
-              {sending ? (
-                <article className="flex items-start gap-3">
-                  <PetAvatar mood="calm" />
-                  <div className="rounded-lg border border-[#d5e3dd] bg-[#edf7f2] px-5 py-4 text-xl text-[#1d3a32]">
-                    今のお話を受け止めています
-                  </div>
-                </article>
-              ) : null}
-              <div ref={messagesEndRef} />
-            </div>
+                        <p>{message.text}</p>
+                        {message.debug ? (
+                          <p className="mt-3 border-t border-[#bfd7cc] pt-2 text-sm leading-6 text-[#4d6a60]">
+                            制御: {message.debug.usedMock ? "mock" : "OpenAI"} / plan:{" "}
+                            {message.debug.planSource ?? "local"} / focus:{" "}
+                            {message.debug.mainFocus ?? "なし"} / event:{" "}
+                            {message.debug.eventType} / topic:{" "}
+                            {message.debug.topicType} / strategy:{" "}
+                            {message.debug.listeningStrategy ?? "safety"} / generation:{" "}
+                            {message.debug.generationSource}
+                            <br />
+                            記憶候補: {message.debug.memoryExtraction.status} / 件数:{" "}
+                            {message.debug.memoryExtraction.candidateCount} / category:{" "}
+                            {message.debug.memoryExtraction.categories.join(", ") || "なし"} / 除外:{" "}
+                            {message.debug.memoryExtraction.rejectedCount} / reason:{" "}
+                            {message.debug.memoryExtraction.rejectionReasonCodes.join(", ") || "なし"}
+                          </p>
+                        ) : null}
+                      </div>
+                    </article>
+                  );
+                })}
+                <div ref={messagesEndRef} />
+              </div>
+            </details>
 
             <form
               onSubmit={sendMessage}
@@ -793,7 +854,7 @@ export default function ConversationClient({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSpeechEnabled((current) => !current)}
+                  onClick={toggleSpeech}
                   disabled={restoringConversation || endingConversation}
                   className={`min-h-14 rounded-lg border px-4 text-xl font-bold transition ${
                     speechEnabled
@@ -905,6 +966,14 @@ export default function ConversationClient({
                     <dd className="inline">
                       : {latestDebug.listeningStrategy ?? "safety"}
                     </dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-bold">目的</dt>
+                    <dd className="inline">: {latestDebug.responsePurpose}</dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-bold">質問方針</dt>
+                    <dd className="inline">: {latestDebug.questionPolicy}</dd>
                   </div>
                   <div>
                     <dt className="inline font-bold">生成元</dt>

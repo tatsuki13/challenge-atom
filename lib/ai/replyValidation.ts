@@ -4,11 +4,18 @@ import type {
   MemoryRetrievalMode,
   ReplyRejectionReason,
 } from "../conversationTypes";
+import type {
+  ConversationSignals,
+  QuestionPolicy,
+  ResponsePurpose,
+} from "./conversationEngine";
 
 export type ReplyContract = {
   mode: MemoryRetrievalMode | "safety";
   memoryRole: "none" | "answer_context" | "candidate_presentation" | "clarification" | "safety";
   maximumQuestions: number | null;
+  questionPolicy: QuestionPolicy;
+  requiresQuestion: boolean;
   requiresContinuationCue: boolean;
   requiresClarificationIntent: boolean;
   mayUseConfirmedMemory: boolean;
@@ -19,6 +26,10 @@ export type ReplyValidationInput = {
   memoryMode: MemoryRetrievalMode | "safety";
   memorySelectionRequired?: boolean;
   listeningStrategy?: ListeningStrategy | null;
+  questionPolicy?: QuestionPolicy;
+  responsePurpose?: ResponsePurpose;
+  conversationSignals?: ConversationSignals | null;
+  memoryConfirmationContent?: string | null;
   memories?: MemoryPromptContext[];
   currentUserMessage: string;
 };
@@ -32,14 +43,21 @@ export type ReplyValidationResult = {
 export function getReplyContract(
   mode: MemoryRetrievalMode | "safety",
   memorySelectionRequired = false,
-  listeningStrategy: ListeningStrategy | null = null,
+  _listeningStrategy: ListeningStrategy | null = null,
+  questionPolicy?: QuestionPolicy,
 ): ReplyContract {
-  const requiresContinuationCue = listeningStrategy !== "allow_silence";
-  if (mode === "safety") return { mode, memoryRole: "safety", maximumQuestions: null, requiresContinuationCue: false, requiresClarificationIntent: false, mayUseConfirmedMemory: false };
-  if (mode === "clarification") return { mode, memoryRole: "clarification", maximumQuestions: 1, requiresContinuationCue: true, requiresClarificationIntent: true, mayUseConfirmedMemory: false };
-  if (mode === "category_browse") return { mode, memoryRole: "candidate_presentation", maximumQuestions: 1, requiresContinuationCue, requiresClarificationIntent: memorySelectionRequired, mayUseConfirmedMemory: true };
-  if (mode === "topic_match") return { mode, memoryRole: "answer_context", maximumQuestions: 1, requiresContinuationCue, requiresClarificationIntent: false, mayUseConfirmedMemory: true };
-  return { mode, memoryRole: "none", maximumQuestions: 1, requiresContinuationCue, requiresClarificationIntent: false, mayUseConfirmedMemory: false };
+  const requestedQuestionPolicy =
+    questionPolicy ?? (_listeningStrategy === "allow_silence" ? "avoid" : "optional");
+  const effectiveQuestionPolicy: QuestionPolicy =
+    mode === "clarification" || memorySelectionRequired ? "required" : requestedQuestionPolicy;
+  const requiresQuestion = effectiveQuestionPolicy === "required";
+  const requiresContinuationCue =
+    mode === "clarification" || (mode === "category_browse" && memorySelectionRequired);
+  if (mode === "safety") return { mode, memoryRole: "safety", maximumQuestions: null, questionPolicy: "required", requiresQuestion: false, requiresContinuationCue: false, requiresClarificationIntent: false, mayUseConfirmedMemory: false };
+  if (mode === "clarification") return { mode, memoryRole: "clarification", maximumQuestions: 1, questionPolicy: effectiveQuestionPolicy, requiresQuestion, requiresContinuationCue, requiresClarificationIntent: true, mayUseConfirmedMemory: false };
+  if (mode === "category_browse") return { mode, memoryRole: "candidate_presentation", maximumQuestions: 1, questionPolicy: effectiveQuestionPolicy, requiresQuestion, requiresContinuationCue, requiresClarificationIntent: memorySelectionRequired, mayUseConfirmedMemory: true };
+  if (mode === "topic_match") return { mode, memoryRole: "answer_context", maximumQuestions: 1, questionPolicy: effectiveQuestionPolicy, requiresQuestion, requiresContinuationCue, requiresClarificationIntent: false, mayUseConfirmedMemory: true };
+  return { mode, memoryRole: "none", maximumQuestions: 1, questionPolicy: effectiveQuestionPolicy, requiresQuestion, requiresContinuationCue, requiresClarificationIntent: false, mayUseConfirmedMemory: false };
 }
 
 export function getReplyContractInstructions(contract: ReplyContract) {
@@ -48,10 +66,14 @@ export function getReplyContractInstructions(contract: ReplyContract) {
     `- contractMode: ${contract.mode}`,
     contract.maximumQuestions === null
       ? "- Follow the existing safety response without applying normal-conversation question limits."
-      : "- A user-facing question is optional and there may be at most one independent question or request for clarification.",
+      : contract.questionPolicy === "required"
+        ? "- Ask exactly one short question needed by the response purpose."
+        : contract.questionPolicy === "avoid"
+          ? "- Do not ask a question in this turn. Leave calm conversational space instead."
+          : "- A question is optional, not the default. Use at most one only when it genuinely helps the same topic continue.",
     contract.requiresContinuationCue
       ? "- After acknowledging the user, leave exactly one natural opening for them to continue: either one question or one brief non-question invitation. Do not end with acknowledgement alone."
-      : "- A continuation prompt is not required. Do not pressure the user to keep talking.",
+      : "- A question or continuation prompt is not required. A complete statement may end the response naturally.",
   ];
   if (contract.mode === "none") return [...lines, "- Give a normal conversational response and do not imply that any prior memory was used."];
   if (contract.mode === "topic_match") return [...lines,
@@ -147,20 +169,79 @@ function contradictsCurrentUtterance(text: string, currentUserMessage: string) {
   return false;
 }
 
+function includesRequiredMemoryConsent(text: string, content: string) {
+  const normalizedText = normalizeClaimText(text);
+  const normalizedContent = normalizeClaimText(content);
+  return (
+    normalizedContent.length > 0 &&
+    normalizedText.includes(normalizedContent) &&
+    /「[^」]+」/u.test(text) &&
+    /覚えておいても(?:よい|いい)ですか/u.test(text)
+  );
+}
+
+function violatesConversationGrounding(input: ReplyValidationInput, text: string) {
+  const signals = input.conversationSignals;
+  const questionCount = countQuestions(text);
+  const inspectableText = stripQuotedAndCandidateText(text);
+  if (/FR-?IC|フレイル.{0,12}(?:点|スコア|評価)/iu.test(text)) return true;
+  if (/(?:しましょう|していきましょう)(?:か)?/u.test(inspectableText)) return true;
+  if (
+    signals &&
+    !signals.explicitFeeling &&
+    /(?:寂しい|さびしい|悲しい|不安な|つらい気持ち)/u.test(text)
+  ) return true;
+  if (
+    signals &&
+    !signals.suggestionRequested &&
+    input.responsePurpose !== "follow_preference" &&
+    /(?:してみませんか|してみては|連絡してみ|電話してみ|出かけてみ|試してみ)/u.test(text)
+  ) return true;
+  if (signals && !signals.weatherMentioned && /(?:今日|外).{0,8}(?:晴れ|雨|雪|曇り|暑い|寒い|いい天気)/u.test(text)) return true;
+  if (signals && !signals.photoMentioned && /(?:写真|画像).{0,12}(?:見え|写って|拝見|見ました)/u.test(text)) return true;
+  if (
+    questionCount > 0 &&
+    input.questionPolicy !== "required" &&
+    [
+      { reply: /(?:睡眠|眠れ|眠り)/u, source: /(?:睡眠|眠れ|眠り|寝た|寝られ)/u },
+      { reply: /(?:食事|食欲|食べられ)/u, source: /(?:食事|食欲|食べ|ご飯|朝食|昼食|夕食)/u },
+      { reply: /(?:体調|具合|痛み)/u, source: /(?:体調|具合|痛|だる|しんど|疲れ)/u },
+      { reply: /(?:気分|気持ち)/u, source: /(?:気分|気持ち|寂し|さびし|不安|悲し|うれし|嬉し|楽し)/u },
+    ].some(({ reply, source }) => reply.test(text) && !source.test(input.currentUserMessage))
+  ) return true;
+  return false;
+}
+
 export function validateReplyAgainstContract(input: ReplyValidationInput): ReplyValidationResult {
   const text = input.text.normalize("NFKC").trim();
   if (!text) return { accepted: false, reason: "empty_response", questionCount: 0 };
-  const contract = getReplyContract(input.memoryMode, input.memorySelectionRequired, input.listeningStrategy);
+  const contract = getReplyContract(
+    input.memoryMode,
+    input.memorySelectionRequired,
+    input.listeningStrategy,
+    input.questionPolicy,
+  );
   if (contract.mode === "safety") return { accepted: true, reason: null, questionCount: countQuestions(text) };
   const questionCount = countQuestions(text);
   if (contract.maximumQuestions !== null && questionCount > contract.maximumQuestions) return { accepted: false, reason: "too_many_questions", questionCount };
+  if (contract.questionPolicy === "avoid" && questionCount > 0) return { accepted: false, reason: "mode_contract_violation", questionCount };
   if (
     (contract.mode === "none" && hasMemoryFacade(text)) ||
     (contract.mode === "clarification" && hasConcreteRememberedAssertion(text)) ||
     ((contract.mode === "topic_match" || contract.mode === "category_browse") && hasUnsupportedClaim(text, input.memories ?? [], input.currentUserMessage))
   ) return { accepted: false, reason: "unsupported_memory_claim", questionCount };
+  if (
+    input.memoryConfirmationContent &&
+    !includesRequiredMemoryConsent(text, input.memoryConfirmationContent)
+  ) return { accepted: false, reason: "mode_contract_violation", questionCount };
+  if (
+    contract.requiresQuestion &&
+    questionCount === 0 &&
+    !hasClarificationIntent(text, questionCount)
+  ) return { accepted: false, reason: "missing_clarification", questionCount };
   if (contract.requiresClarificationIntent && !hasClarificationIntent(text, questionCount)) return { accepted: false, reason: "missing_clarification", questionCount };
   if (contradictsCurrentUtterance(text, input.currentUserMessage)) return { accepted: false, reason: "mode_contract_violation", questionCount };
+  if (violatesConversationGrounding(input, text)) return { accepted: false, reason: "mode_contract_violation", questionCount };
   if (contract.requiresContinuationCue && !hasContinuationCue(text, questionCount)) return { accepted: false, reason: "missing_continuation_cue", questionCount };
   return { accepted: true, reason: null, questionCount };
 }

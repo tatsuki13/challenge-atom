@@ -112,6 +112,103 @@ textarea {
   border-radius: 10px 10px 0 0;
 }
 
+.conversation-avatar {
+  position: relative;
+  display: grid;
+  width: 154px;
+  height: 138px;
+  place-items: center;
+}
+
+.conversation-avatar::after {
+  position: absolute;
+  right: 16px;
+  bottom: 4px;
+  left: 16px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgb(47 124 104 / 14%);
+  filter: blur(7px);
+  content: "";
+}
+
+.conversation-avatar .pet-avatar {
+  z-index: 1;
+  transform: scale(2.35);
+  animation: none;
+}
+
+.conversation-avatar[data-thinking="true"] {
+  animation: avatar-listening 1.4s ease-in-out infinite;
+}
+
+.conversation-avatar[data-speaking="true"] {
+  animation: avatar-speaking 0.8s ease-in-out infinite;
+}
+
+.conversation-avatar[data-speaking="true"] .pet-mouth {
+  animation: pet-mouth-speaking 0.38s ease-in-out infinite alternate;
+}
+
+.conversation-speech {
+  position: relative;
+}
+
+.conversation-speech::before {
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  border-top: 1px solid #c7ddd4;
+  border-left: 1px solid #c7ddd4;
+  background: white;
+  content: "";
+  transform: translateX(-50%) rotate(45deg);
+}
+
+@keyframes avatar-listening {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(4px);
+  }
+}
+
+@keyframes avatar-speaking {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+
+  50% {
+    transform: translateY(-4px) rotate(1deg);
+  }
+}
+
+@keyframes pet-mouth-speaking {
+  from {
+    bottom: 12px;
+    height: 5px;
+  }
+
+  to {
+    bottom: 9px;
+    height: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-avatar,
+  .conversation-avatar,
+  .conversation-avatar .pet-mouth {
+    animation: none !important;
+  }
+}
+
 @keyframes pet-nod {
   0%,
   100% {

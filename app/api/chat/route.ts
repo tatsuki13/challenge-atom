@@ -6,6 +6,8 @@ import {
   normalizeConversationTurnPlan,
   type ConversationMode,
   type EventType,
+  type QuestionPolicy,
+  type ResponsePurpose,
   type TopicType,
   type ConversationTurnPlan,
 } from "@/lib/ai/conversationEngine";
@@ -31,7 +33,7 @@ import {
   toMemoryPromptContext,
 } from "@/lib/ai/memoryRetrieval";
 import { normalizeDetectedMemoryManagementRequest } from "@/lib/ai/memoryManagementDetection";
-import { countQuestions, validateReplyAgainstContract } from "@/lib/ai/replyValidation";
+import { validateReplyAgainstContract } from "@/lib/ai/replyValidation";
 import { estimateEmotion } from "@/lib/emotion";
 import { getCurrentUser } from "@/lib/auth";
 import {
@@ -108,6 +110,16 @@ const topicTypes = new Set<TopicType>([
   "unknown",
 ]);
 
+const responsePurposes = new Set<ResponsePurpose>([
+  "receive",
+  "continue_topic",
+  "clarify",
+  "follow_preference",
+  "pause_or_close",
+]);
+
+const questionPolicies = new Set<QuestionPolicy>(["avoid", "optional", "required"]);
+
 type AiPlanPatch = Partial<
   Pick<
     ConversationTurnPlan,
@@ -117,9 +129,9 @@ type AiPlanPatch = Partial<
     | "eventType"
     | "relationHint"
     | "topicType"
+    | "responsePurpose"
+    | "questionPolicy"
     | "listeningStrategy"
-    | "shouldAskQuestion"
-    | "suggestedQuestion"
   >
 >;
 
@@ -146,6 +158,8 @@ const aiPlanResponseSchema = {
     eventType: { type: "string", enum: [...eventTypes] },
     relationHint: { anyOf: [{ type: "string" }, { type: "null" }] },
     topicType: { type: "string", enum: [...topicTypes] },
+    responsePurpose: { type: "string", enum: [...responsePurposes] },
+    questionPolicy: { type: "string", enum: [...questionPolicies] },
     listeningStrategy: {
       type: "string",
       enum: [
@@ -159,8 +173,6 @@ const aiPlanResponseSchema = {
         "change_topic",
       ],
     },
-    shouldAskQuestion: { type: "boolean" },
-    suggestedQuestion: { anyOf: [{ type: "string" }, { type: "null" }] },
     memoryCandidates: {
       type: "array",
       items: MEMORY_CANDIDATE_JSON_SCHEMA,
@@ -254,9 +266,9 @@ const aiPlanResponseSchema = {
     "eventType",
     "relationHint",
     "topicType",
+    "responsePurpose",
+    "questionPolicy",
     "listeningStrategy",
-    "shouldAskQuestion",
-    "suggestedQuestion",
     "memoryCandidates",
     "memoryRetrieval",
     "memoryManagementRequest",
@@ -351,16 +363,13 @@ function parseJsonObject(text: string) {
 function normalizeAiPlanPatch(parsed: Record<string, unknown>): AiPlanPatch | null {
   const focusTerms = sanitizeTerms(parsed.focusTerms);
   const mainFocus = sanitizeText(parsed.mainFocus, 32);
-  const suggestedQuestionText = sanitizeText(parsed.suggestedQuestion, 80);
-  const suggestedQuestion =
-    suggestedQuestionText && countQuestions(suggestedQuestionText) === 1
-      ? suggestedQuestionText
-      : null;
   const relationHint = sanitizeText(parsed.relationHint, 40);
   const patch: AiPlanPatch = {};
   const mode = pickEnum(parsed.mode, conversationModes);
   const eventType = pickEnum(parsed.eventType, eventTypes);
   const topicType = pickEnum(parsed.topicType, topicTypes);
+  const responsePurpose = pickEnum(parsed.responsePurpose, responsePurposes);
+  const questionPolicy = pickEnum(parsed.questionPolicy, questionPolicies);
   const listeningStrategy = isListeningStrategy(parsed.listeningStrategy)
     ? parsed.listeningStrategy
     : null;
@@ -385,20 +394,20 @@ function normalizeAiPlanPatch(parsed: Record<string, unknown>): AiPlanPatch | nu
     patch.topicType = topicType;
   }
 
+  if (responsePurpose) {
+    patch.responsePurpose = responsePurpose;
+  }
+
+  if (questionPolicy) {
+    patch.questionPolicy = questionPolicy;
+  }
+
   if (listeningStrategy) {
     patch.listeningStrategy = listeningStrategy;
   }
 
   if (relationHint) {
     patch.relationHint = relationHint;
-  }
-
-  if (typeof parsed.shouldAskQuestion === "boolean") {
-    patch.shouldAskQuestion = parsed.shouldAskQuestion;
-  }
-
-  if (suggestedQuestion) {
-    patch.suggestedQuestion = suggestedQuestion;
   }
 
   return Object.keys(patch).length > 0 ? patch : null;
@@ -428,11 +437,11 @@ function mergeAiPlanPatch(
     eventType: patch.eventType ?? localPlan.eventType,
     relationHint: patch.relationHint ?? localPlan.relationHint,
     topicType: patch.topicType ?? localPlan.topicType,
+    responsePurpose: patch.responsePurpose ?? localPlan.responsePurpose,
+    questionPolicy: patch.questionPolicy ?? localPlan.questionPolicy,
     listeningStrategy: patch.listeningStrategy ?? localPlan.listeningStrategy,
-    shouldAskQuestion: patch.shouldAskQuestion ?? localPlan.shouldAskQuestion,
-    suggestedQuestion: (patch.shouldAskQuestion ?? localPlan.shouldAskQuestion)
-      ? (patch.suggestedQuestion ?? localPlan.suggestedQuestion ?? null)
-      : null,
+    shouldAskQuestion: (patch.questionPolicy ?? localPlan.questionPolicy) === "required",
+    suggestedQuestion: null,
   };
 
   return normalizeConversationTurnPlan({
@@ -480,13 +489,24 @@ async function createOpenAIPlanAnalysis({
           "You analyze one Japanese conversation turn for a friendly elderly-care chat partner.",
           "Return one object matching the supplied JSON schema.",
           "Pick the most conversation-worthy concrete term, not just a feeling word.",
-          "Prefer a natural follow-up question when it would help the conversation continue.",
+          "Default to casual conversation. Preserve the user's topic and apparent willingness to continue instead of turning each concrete topic into a question.",
+          "The user owns the next step. Do not advance the conversation, choose their next topic, or decide that they will continue or act.",
+          "Conversation signals are passive observations. Never ask questions merely to fill an unobserved or false state field.",
           "Never make medical diagnosis. Safety remains handled elsewhere.",
           'Allowed mode: casual, reminiscence, loneliness, anxiety, daily_life, continuation.',
           'Allowed eventType: talked_with, met, went_to, ate, saw, made, heard_about, is_trending, remembered, felt, unknown.',
           'Allowed topicType: person, place, food, activity, object, memory, feeling, unknown.',
           'Allowed listeningStrategy: acknowledge, reflect_content, reflect_emotion, show_interest, ask_open_question, ask_clarification, allow_silence, change_topic.',
-          "suggestedQuestion must be a short natural Japanese question, not a generic interview question.",
+          'Allowed responsePurpose: receive, continue_topic, clarify, follow_preference, pause_or_close.',
+          'Allowed questionPolicy: avoid, optional, required.',
+          "Use continue_topic with questionPolicy=optional for an ordinary concrete topic. A concrete topic alone is not a reason to require a question.",
+          "Use clarify with questionPolicy=required only when one necessary point or the user's preference for today must be checked.",
+          "Use receive with questionPolicy=avoid after short replies, repeated assistant questions, or a rejected proposal.",
+          "Use follow_preference when the user requests a topic change or asks for a suggestion. If a topic change has no destination, one short preference question may be required; if the user supplied the next topic, do not ask again. Do not repeat a rejected suggestion.",
+          "Use pause_or_close with questionPolicy=avoid when the user wants to rest or end.",
+          "Do not infer loneliness from a family member being absent. Do not propose contact or action unless requested or required for safety.",
+          "Treat health and feeling statements as user-reported content, not clinical scores or diagnoses. Never infer or calculate FR-IC.",
+          "Do not introduce weather or photos unless the user mentioned them or they are actually present in the input.",
           "memoryCandidates is used for a two-turn consent flow and must contain at most one durable fact.",
           "When pendingMemoryConfirmation is null, extract at most one proposed fact only from userMessage. It will not be saved yet; the assistant will ask permission first.",
           "When pendingMemoryConfirmation is present and userMessage explicitly agrees, reconstruct that one fact from pendingMemoryConfirmation and return it in memoryCandidates.",
@@ -592,6 +612,9 @@ async function createOpenAIReply({
   memoryMode,
   memorySelectionRequired,
   memoryClarificationReason,
+  memoryConfirmationContent,
+  rejectedReply = null,
+  replyRejectionReason = null,
 }: {
   messages: StoredChatMessage[];
   userMessage: string;
@@ -602,6 +625,9 @@ async function createOpenAIReply({
   memoryMode: MemoryRetrievalMode;
   memorySelectionRequired: boolean;
   memoryClarificationReason: MemoryRetrievalRequest["clarificationReason"];
+  memoryConfirmationContent: string | null;
+  rejectedReply?: string | null;
+  replyRejectionReason?: ReplyRejectionReason | null;
 }) {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   const model = process.env.OPENAI_MODEL?.trim();
@@ -614,6 +640,8 @@ async function createOpenAIReply({
   const responseTurnPlan = memoryMode === "clarification" || memorySelectionRequired
     ? {
         ...turnPlan,
+        responsePurpose: "clarify" as const,
+        questionPolicy: "required" as const,
         listeningStrategy: "ask_clarification" as const,
         shouldAskQuestion: true,
         suggestedQuestion: null,
@@ -629,6 +657,9 @@ async function createOpenAIReply({
     memoryMode,
     memorySelectionRequired,
     memoryClarificationReason,
+    memoryConfirmationContent,
+    rejectedReply,
+    replyRejectionReason,
   });
 
   const response = await client.responses.create({
@@ -827,6 +858,8 @@ export async function POST(request: Request) {
           if (proposedMemoryCandidates.length > 0 && finalTurnPlan) {
             finalTurnPlan = {
               ...finalTurnPlan,
+              responsePurpose: "clarify",
+              questionPolicy: "required",
               listeningStrategy: "ask_clarification",
               shouldAskQuestion: true,
               suggestedQuestion: createMemoryConfirmationQuestion(proposedMemoryCandidates[0]),
@@ -939,6 +972,8 @@ export async function POST(request: Request) {
     ) {
       finalTurnPlan = {
         ...finalTurnPlan,
+        responsePurpose: "clarify",
+        questionPolicy: "required",
         listeningStrategy: "ask_clarification",
         shouldAskQuestion: true,
         suggestedQuestion: null,
@@ -947,42 +982,54 @@ export async function POST(request: Request) {
 
     let generatedReply: string | null = null;
 
-    if (proposedMemoryCandidates.length > 0) {
-      reply = createMemoryConfirmationQuestion(proposedMemoryCandidates[0]);
-      generationSource = "mock";
-    } else if (hasOpenAIConfiguration) {
+    if (hasOpenAIConfiguration) {
       try {
-        const candidateReply = await createOpenAIReply({
-          messages: savedUserMessage.recentMessages,
-          userMessage: message,
-          turnPlan: finalTurnPlan,
-          topicStarter,
-          topicTitle,
-          memories: memorySearchResults,
-          memoryMode: memoryRetrievalRequest?.mode ?? "none",
-          memorySelectionRequired: memorySearchEvaluation?.selectionRequired ?? false,
-          memoryClarificationReason: memoryRetrievalRequest?.clarificationReason ?? "none",
-        });
-        const validation = validateReplyAgainstContract({
-          text: candidateReply ?? "",
-          memoryMode: memoryRetrievalRequest?.mode ?? "none",
-          memorySelectionRequired: memorySearchEvaluation?.selectionRequired ?? false,
-          listeningStrategy: finalTurnPlan?.listeningStrategy ?? null,
-          memories: memorySearchResults.map(toMemoryPromptContext),
-          currentUserMessage: message,
-        });
-        generatedReply = validation.accepted ? candidateReply : null;
-        replyRejectionReason = validation.reason;
+        let rejectedReply: string | null = null;
+        let previousRejectionReason: ReplyRejectionReason | null = null;
+
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const candidateReply = await createOpenAIReply({
+            messages: savedUserMessage.recentMessages,
+            userMessage: message,
+            turnPlan: finalTurnPlan,
+            topicStarter,
+            topicTitle,
+            memories: memorySearchResults,
+            memoryMode: memoryRetrievalRequest?.mode ?? "none",
+            memorySelectionRequired: memorySearchEvaluation?.selectionRequired ?? false,
+            memoryClarificationReason: memoryRetrievalRequest?.clarificationReason ?? "none",
+            memoryConfirmationContent: proposedMemoryCandidates[0]?.content ?? null,
+            rejectedReply,
+            replyRejectionReason: previousRejectionReason,
+          });
+          const validation = validateReplyAgainstContract({
+            text: candidateReply ?? "",
+            memoryMode: memoryRetrievalRequest?.mode ?? "none",
+            memorySelectionRequired: memorySearchEvaluation?.selectionRequired ?? false,
+            listeningStrategy: finalTurnPlan?.listeningStrategy ?? null,
+            questionPolicy: finalTurnPlan?.questionPolicy ?? "optional",
+            responsePurpose: finalTurnPlan?.responsePurpose ?? "receive",
+            conversationSignals: finalTurnPlan?.conversationSignals ?? null,
+            memoryConfirmationContent: proposedMemoryCandidates[0]?.content ?? null,
+            memories: memorySearchResults.map(toMemoryPromptContext),
+            currentUserMessage: message,
+          });
+
+          replyRejectionReason = validation.reason;
+          if (validation.accepted) {
+            generatedReply = candidateReply;
+            break;
+          }
+          rejectedReply = candidateReply;
+          previousRejectionReason = validation.reason;
+        }
       } catch {
         replyRejectionReason = "generation_error";
         console.warn("OpenAI response failed; using mock reply.");
       }
     }
 
-    if (proposedMemoryCandidates.length > 0) {
-      // The exact wording is deliberate: the next turn can prove that consent
-      // answered this specific memory question rather than an unrelated prompt.
-    } else if (generatedReply) {
+    if (generatedReply) {
       reply = generatedReply;
       generationSource = "openai";
     } else {
@@ -1167,6 +1214,9 @@ export async function POST(request: Request) {
       focusTerms: finalTurnPlan?.focusTerms ?? [],
       eventType: finalTurnPlan?.eventType ?? "unknown",
       topicType: finalTurnPlan?.topicType ?? "unknown",
+      responsePurpose: finalTurnPlan?.responsePurpose ?? "safety",
+      questionPolicy: finalTurnPlan?.questionPolicy ?? "required",
+      conversationSignals: finalTurnPlan?.conversationSignals ?? null,
       shouldAskQuestion: finalTurnPlan?.shouldAskQuestion ?? false,
       suggestedQuestion: finalTurnPlan?.suggestedQuestion ?? null,
       topicStarter,

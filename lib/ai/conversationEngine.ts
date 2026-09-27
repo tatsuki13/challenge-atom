@@ -36,6 +36,31 @@ export type TopicType =
   | "feeling"
   | "unknown";
 
+export type ResponsePurpose =
+  | "receive"
+  | "continue_topic"
+  | "clarify"
+  | "follow_preference"
+  | "pause_or_close"
+  | "safety";
+
+export type QuestionPolicy = "avoid" | "optional" | "required";
+
+export type ConversationSignals = {
+  shortReply: boolean;
+  recentQuestionCount: number;
+  repeatedQuestions: boolean;
+  topicChangeRequested: boolean;
+  topicChangeTargetProvided: boolean;
+  proposalRejected: boolean;
+  pauseRequested: boolean;
+  lowEnergyStatement: boolean;
+  explicitFeeling: boolean;
+  suggestionRequested: boolean;
+  weatherMentioned: boolean;
+  photoMentioned: boolean;
+};
+
 export type ConversationTurnPlan = {
   safetyLevel: RiskLevel;
   mode: ConversationMode;
@@ -44,6 +69,9 @@ export type ConversationTurnPlan = {
   eventType: EventType;
   relationHint: string | null;
   topicType: TopicType;
+  responsePurpose: ResponsePurpose;
+  questionPolicy: QuestionPolicy;
+  conversationSignals: ConversationSignals;
   listeningStrategy: ListeningStrategy;
   shouldAskQuestion: boolean;
   suggestedQuestion?: string | null;
@@ -117,6 +145,7 @@ const focusRules: FocusRule[] = [
   { label: "寂しい", terms: ["寂しい", "さびしい"], topicType: "feeling", weight: 38 },
   { label: "不安", terms: ["不安", "心配", "気になる"], topicType: "feeling", weight: 38 },
   { label: "疲れた", terms: ["疲れた", "疲れ"], topicType: "feeling", weight: 38 },
+  { label: "だるい", terms: ["だるい", "だるさ", "しんどい", "体が重い"], topicType: "feeling", weight: 38 },
 ];
 
 const patternRules: PatternRule[] = [
@@ -385,6 +414,39 @@ const topicChangeTerms = [
   "話題を変え",
   "話を変え",
 ];
+
+const pauseTerms = [
+  "休みたい",
+  "少し休む",
+  "もう休む",
+  "今日は終わり",
+  "もう終わり",
+  "また今度",
+  "今日はもういい",
+];
+const lowEnergyTerms = ["だるい", "だるさ", "しんどい", "体が重い", "疲れた"];
+const suggestionRequestTerms = [
+  "どうしたら",
+  "どうすれば",
+  "何かない",
+  "おすすめ",
+  "提案して",
+  "考えてほしい",
+  "何をしたら",
+];
+const proposalRejectionTerms = [
+  "しなくていい",
+  "したくない",
+  "やりたくない",
+  "やめておく",
+  "遠慮します",
+  "結構です",
+  "今はいい",
+  "いりません",
+  "要りません",
+];
+const proposalPattern =
+  /(?:してみませんか|してみては|どうですか|いかがですか|よかったら|おすすめ|試して|連絡して|電話して|出かけて)/;
 
 const ambiguousReferencePattern = /(?:それ|これ|あれ|その人|あの人|そこ|あそこ|あのこと)/;
 
@@ -756,10 +818,6 @@ function containsQuestion(text: string) {
   return /[？?]/.test(text);
 }
 
-function hasRecentQuestion(assistantReplies: string[]) {
-  return assistantReplies.slice(-1).some(containsQuestion);
-}
-
 function hasTwoRecentQuestions(assistantReplies: string[]) {
   const recent = assistantReplies.slice(-2);
 
@@ -849,82 +907,133 @@ function requestsTopicChange(text: string) {
   return includesAny(text, topicChangeTerms);
 }
 
+function requestedPause(text: string) {
+  return includesAny(text, pauseTerms);
+}
+
+function isLowEnergyStatement(text: string) {
+  return includesAny(text, lowEnergyTerms);
+}
+
+function requestsSuggestion(text: string) {
+  return includesAny(text, suggestionRequestTerms);
+}
+
+function rejectedPreviousProposal(text: string, recentMessages: StoredChatMessage[]) {
+  if (!includesAny(text, proposalRejectionTerms)) return false;
+  const lastAssistant = recentMessages
+    .slice()
+    .reverse()
+    .find((message) => message.role === "assistant");
+  return Boolean(lastAssistant && proposalPattern.test(lastAssistant.content));
+}
+
 function needsClarification(text: string, topCandidate: FocusCandidate | null) {
   return topCandidate === null && ambiguousReferencePattern.test(text);
 }
 
-function chooseShouldAskQuestion({
+function collectConversationSignals({
   userMessage,
-  mode,
-  topCandidate,
   candidates,
   assistantReplies,
+  recentMessages,
 }: {
   userMessage: string;
-  mode: ConversationMode;
-  topCandidate: FocusCandidate | null;
   candidates: FocusCandidate[];
   assistantReplies: string[];
-}) {
+  recentMessages: StoredChatMessage[];
+}): ConversationSignals {
+  const recentQuestionCount = assistantReplies.slice(-2).filter(containsQuestion).length;
+  const recentUserContext = recentMessages
+    .filter((message) => message.role === "user")
+    .slice(-4)
+    .map((message) => message.content)
+    .join(" ");
+  const groundedUserContext = `${recentUserContext} ${userMessage}`;
+  const topicChangeRequested = requestsTopicChange(userMessage);
+  return {
+    shortReply: isShortAnswer(userMessage, candidates),
+    recentQuestionCount,
+    repeatedQuestions: assistantReplies.slice(-2).length === 2 && recentQuestionCount === 2,
+    topicChangeRequested,
+    topicChangeTargetProvided:
+      topicChangeRequested && candidates.some(isConcreteCandidate),
+    proposalRejected: rejectedPreviousProposal(userMessage, recentMessages),
+    pauseRequested: requestedPause(userMessage) || isNoAnswer(userMessage),
+    lowEnergyStatement: isLowEnergyStatement(userMessage),
+    explicitFeeling: includesAny(userMessage, [
+      ...lonelinessTerms,
+      ...anxietyTerms,
+      "悲しい",
+      "つらい",
+      "疲れた",
+      "だるい",
+      "しんどい",
+    ]),
+    suggestionRequested: requestsSuggestion(userMessage),
+    weatherMentioned: /(?:天気|晴れ|雨|雪|曇り|暑い|寒い)/.test(groundedUserContext),
+    photoMentioned: /(?:写真|画像)/.test(groundedUserContext),
+  };
+}
+
+function chooseResponsePurpose({
+  mode,
+  topCandidate,
+  signals,
+}: {
+  mode: ConversationMode;
+  topCandidate: FocusCandidate | null;
+  signals: ConversationSignals;
+}): { responsePurpose: ResponsePurpose; questionPolicy: QuestionPolicy } {
   if (mode === "safety") {
-    return false;
+    return { responsePurpose: "safety", questionPolicy: "required" };
   }
-
-  if (hasTwoRecentQuestions(assistantReplies)) {
-    return false;
+  if (signals.pauseRequested) {
+    return { responsePurpose: "pause_or_close", questionPolicy: "avoid" };
   }
-
-  if (isShortAnswer(userMessage, candidates)) {
-    return false;
+  if (signals.lowEnergyStatement) {
+    return { responsePurpose: "clarify", questionPolicy: "required" };
   }
-
-  const hasConcreteFocus = topCandidate !== null && isConcreteCandidate(topCandidate);
-  const previousWasQuestion = hasRecentQuestion(assistantReplies);
-
-  if (
-    previousWasQuestion &&
-    (!hasConcreteFocus || topCandidate?.topicType === "feeling")
-  ) {
-    return false;
+  if (signals.topicChangeRequested) {
+    return {
+      responsePurpose: "follow_preference",
+      questionPolicy: signals.topicChangeTargetProvided ? "optional" : "required",
+    };
   }
-
-  if (
-    topCandidate?.eventType === "talked_with" ||
-    topCandidate?.eventType === "met" ||
-    topCandidate?.eventType === "heard_about" ||
-    topCandidate?.eventType === "saw" ||
-    topCandidate?.eventType === "made"
-  ) {
-    return true;
+  if (signals.suggestionRequested) {
+    return { responsePurpose: "follow_preference", questionPolicy: "optional" };
   }
-
-  if (hasConcreteFocus) {
-    return true;
+  if (signals.proposalRejected || signals.repeatedQuestions || signals.shortReply) {
+    return { responsePurpose: "receive", questionPolicy: "avoid" };
   }
-
-  return mode === "anxiety" || mode === "loneliness";
+  if (topCandidate) {
+    return { responsePurpose: "continue_topic", questionPolicy: "optional" };
+  }
+  return { responsePurpose: "receive", questionPolicy: "optional" };
 }
 
 function chooseListeningStrategy({
   userMessage,
   mode,
   topCandidate,
-  shouldAskQuestion,
+  responsePurpose,
+  questionPolicy,
 }: {
   userMessage: string;
   mode: ConversationMode;
   topCandidate: FocusCandidate | null;
-  shouldAskQuestion: boolean;
+  responsePurpose: ResponsePurpose;
+  questionPolicy: QuestionPolicy;
 }): ListeningStrategy {
   if (requestsTopicChange(userMessage)) {
-    return "change_topic";
+    return topCandidate ? "show_interest" : "ask_clarification";
   }
 
-  if (isNoAnswer(userMessage)) {
+  if (responsePurpose === "pause_or_close") {
     return "allow_silence";
   }
 
-  if (needsClarification(userMessage, topCandidate)) {
+  if (responsePurpose === "clarify" || needsClarification(userMessage, topCandidate)) {
     return "ask_clarification";
   }
 
@@ -939,7 +1048,7 @@ function chooseListeningStrategy({
     return "reflect_emotion";
   }
 
-  if (shouldAskQuestion) {
+  if (questionPolicy === "required") {
     return "ask_open_question";
   }
 
@@ -969,9 +1078,61 @@ export function normalizeConversationTurnPlan({
   const noAnswer = isNoAnswer(userMessage);
   const shortWithoutTopic = !hasConcreteTopic && compactLength <= 12;
   const repeatedQuestions = hasTwoRecentQuestions(recentAssistantReplies);
+  const needsTopicChoice =
+    plan.conversationSignals.topicChangeRequested &&
+    !plan.conversationSignals.topicChangeTargetProvided;
   let listeningStrategy = noAnswer ? "allow_silence" : plan.listeningStrategy;
+  let responsePurpose = plan.responsePurpose;
+  let questionPolicy = plan.questionPolicy;
+
+  if (plan.mode === "safety") {
+    responsePurpose = "safety";
+  } else if (plan.conversationSignals.pauseRequested) {
+    responsePurpose = "pause_or_close";
+  } else if (plan.conversationSignals.lowEnergyStatement) {
+    responsePurpose = "clarify";
+  } else if (
+    plan.conversationSignals.topicChangeRequested ||
+    plan.conversationSignals.suggestionRequested
+  ) {
+    responsePurpose = "follow_preference";
+  } else if (
+    plan.conversationSignals.proposalRejected ||
+    plan.conversationSignals.repeatedQuestions ||
+    plan.conversationSignals.shortReply
+  ) {
+    responsePurpose = "receive";
+  }
 
   if (
+    responsePurpose === "safety" ||
+    responsePurpose === "clarify" ||
+    needsTopicChoice
+  ) {
+    questionPolicy = "required";
+  } else if (
+    responsePurpose === "pause_or_close" ||
+    plan.conversationSignals.proposalRejected ||
+    plan.conversationSignals.repeatedQuestions ||
+    (plan.conversationSignals.shortReply && !plan.conversationSignals.lowEnergyStatement)
+  ) {
+    questionPolicy = "avoid";
+  } else if (questionPolicy === "required") {
+    questionPolicy = "optional";
+  }
+
+  if (needsTopicChoice) {
+    listeningStrategy = "ask_clarification";
+  } else if (
+    plan.conversationSignals.topicChangeRequested &&
+    plan.conversationSignals.topicChangeTargetProvided &&
+    listeningStrategy === "change_topic"
+  ) {
+    listeningStrategy = plan.mainFocus ? "show_interest" : "acknowledge";
+  }
+
+  if (
+    questionPolicy !== "required" &&
     (shortWithoutTopic || repeatedQuestions) &&
     (listeningStrategy === "ask_open_question" || listeningStrategy === "ask_clarification")
   ) {
@@ -985,15 +1146,13 @@ export function normalizeConversationTurnPlan({
           : "acknowledge";
   }
 
-  const shouldAskQuestion =
-    !noAnswer &&
-    !shortWithoutTopic &&
-    !repeatedQuestions &&
-    (listeningStrategy === "ask_open_question" || listeningStrategy === "ask_clarification");
+  const shouldAskQuestion = questionPolicy === "required";
 
   return {
     ...plan,
+    responsePurpose,
     listeningStrategy,
+    questionPolicy,
     shouldAskQuestion,
     suggestedQuestion: shouldAskQuestion ? (plan.suggestedQuestion ?? null) : null,
   };
@@ -1001,12 +1160,14 @@ export function normalizeConversationTurnPlan({
 
 function buildAvoidPatterns({
   mainFocus,
-  shouldAskQuestion,
+  questionPolicy,
   assistantReplies,
+  signals,
 }: {
   mainFocus: string | null;
-  shouldAskQuestion: boolean;
+  questionPolicy: QuestionPolicy;
   assistantReplies: string[];
+  signals: ConversationSignals;
 }) {
   const recentOpeners = assistantReplies
     .slice(-3)
@@ -1017,14 +1178,32 @@ function buildAvoidPatterns({
     "感情確認だけで返すこと",
     "生活情報のチェックリスト化",
     "面接のような質問攻め",
+    "未観測の状態項目を埋めるために質問すること",
+    "ATOMが利用者の次の行動や会話の継続を『〜しましょう』と決めること",
   ];
 
   if (mainFocus) {
     patterns.push(`「${mainFocus}」に触れずに返すこと`);
   }
 
-  if (!shouldAskQuestion) {
-    patterns.push("質問で終わること");
+  if (questionPolicy === "avoid") {
+    patterns.push("質問や新しい提案で会話を押し進めること");
+  }
+
+  if (signals.proposalRejected) {
+    patterns.push("直前に断られた提案を言い換えて繰り返すこと");
+  }
+
+  if (signals.topicChangeRequested && !signals.topicChangeTargetProvided) {
+    patterns.push("ATOM側で次の話題を選んで提示すること");
+  }
+
+  if (!signals.explicitFeeling) {
+    patterns.push("利用者が明言していない寂しさ・悲しさ・不安を断定すること");
+  }
+
+  if (!signals.suggestionRequested) {
+    patterns.push("頼まれていない行動や連絡をすぐ提案すること");
   }
 
   for (const opener of recentOpeners) {
@@ -1057,12 +1236,16 @@ export function analyzeConversationTurn({
     safetyResult,
     topCandidate,
   });
-  const shouldAskQuestion = chooseShouldAskQuestion({
+  const conversationSignals = collectConversationSignals({
     userMessage,
-    mode,
-    topCandidate,
     candidates,
     assistantReplies,
+    recentMessages,
+  });
+  const purpose = chooseResponsePurpose({
+    mode,
+    topCandidate,
+    signals: conversationSignals,
   });
   const mainFocus = topCandidate?.label ?? null;
 
@@ -1074,18 +1257,23 @@ export function analyzeConversationTurn({
     eventType: topCandidate?.eventType ?? "unknown",
     relationHint: topCandidate?.relationHint ?? null,
     topicType: topCandidate?.topicType ?? "unknown",
+    responsePurpose: purpose.responsePurpose,
+    questionPolicy: purpose.questionPolicy,
+    conversationSignals,
     listeningStrategy: chooseListeningStrategy({
       userMessage,
       mode,
       topCandidate,
-      shouldAskQuestion,
+      responsePurpose: purpose.responsePurpose,
+      questionPolicy: purpose.questionPolicy,
     }),
-    shouldAskQuestion,
+    shouldAskQuestion: purpose.questionPolicy === "required",
     suggestedQuestion: null,
     avoidPatterns: buildAvoidPatterns({
       mainFocus,
-      shouldAskQuestion,
+      questionPolicy: purpose.questionPolicy,
       assistantReplies,
+      signals: conversationSignals,
     }),
   };
 

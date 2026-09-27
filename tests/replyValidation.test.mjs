@@ -9,6 +9,20 @@ import {
 const blueHat = { category: "preference", content: "青い帽子が好き", polarity: "positive", temporalScope: "current" };
 const dog = { category: "preference", content: "犬が好き", polarity: "positive", temporalScope: "current" };
 const coffee = { category: "preference", content: "深煎りコーヒーが好き", polarity: "positive", temporalScope: "current" };
+const baseSignals = {
+  shortReply: false,
+  recentQuestionCount: 0,
+  repeatedQuestions: false,
+  topicChangeRequested: false,
+  topicChangeTargetProvided: false,
+  proposalRejected: false,
+  pauseRequested: false,
+  lowEnergyStatement: false,
+  explicitFeeling: false,
+  suggestionRequested: false,
+  weatherMentioned: false,
+  photoMentioned: false,
+};
 
 function validate(text, memoryMode, options = {}) {
   return validateReplyAgainstContract({
@@ -16,6 +30,10 @@ function validate(text, memoryMode, options = {}) {
     memoryMode,
     memorySelectionRequired: options.memorySelectionRequired ?? false,
     listeningStrategy: options.listeningStrategy ?? "show_interest",
+    questionPolicy: options.questionPolicy ?? "optional",
+    responsePurpose: options.responsePurpose ?? "continue_topic",
+    conversationSignals: options.conversationSignals ?? baseSignals,
+    memoryConfirmationContent: options.memoryConfirmationContent ?? null,
     memories: options.memories ?? [],
     currentUserMessage: options.currentUserMessage ?? "前の話を確認したい",
   });
@@ -51,7 +69,20 @@ test("mode contracts reject invalid synthetic replies with deterministic reasons
   assert.equal(validate("前のお話を覚えています。", "none").reason, "unsupported_memory_claim");
   assert.equal(validate("   ", "topic_match", { memories: [blueHat] }).reason, "empty_response");
   assert.equal(validate("候補はこちらです。", "category_browse", { memories: [dog, coffee], memorySelectionRequired: true }).reason, "missing_clarification");
-  assert.equal(validate("そうだったんですね。", "none").reason, "missing_continuation_cue");
+  assert.equal(validate("そうだったんですね。", "none").accepted, true);
+  assert.equal(validate("そうだったんですね。何かありましたか？", "none", { questionPolicy: "avoid" }).reason, "mode_contract_violation");
+  assert.equal(validate("今日はだるさがあるんですね。", "none", { questionPolicy: "required", responsePurpose: "clarify" }).reason, "missing_clarification");
+  assert.equal(validate("今日はだるさがあるんですね。今は少し話したいですか？", "none", { questionPolicy: "required", responsePurpose: "clarify" }).accepted, true);
+  assert.equal(validate("「毎朝コーヒーを飲む」ということですね。今後も覚えています。", "none", { questionPolicy: "required", memoryConfirmationContent: "毎朝コーヒーを飲む" }).reason, "unsupported_memory_claim");
+  assert.equal(validate("「毎朝コーヒーを飲む」ということですね。今後の会話のために覚えておいてもよいですか？", "none", { questionPolicy: "required", memoryConfirmationContent: "毎朝コーヒーを飲む" }).accepted, true);
+  assert.equal(validate("娘さんが来なくて寂しいんですね。電話してみませんか？", "none", { currentUserMessage: "娘が来なくてね" }).reason, "mode_contract_violation");
+  assert.equal(validate("今日はゆっくり話しましょうか？", "none").reason, "mode_contract_violation");
+  assert.equal(validate("「ゆっくり話しましょう」と言われたんですね。", "none").accepted, true);
+  assert.equal(validate("ゆっくり話しますか？", "none", { questionPolicy: "required", responsePurpose: "clarify" }).accepted, true);
+  assert.equal(validate("最近の睡眠はどうですか？", "none", { currentUserMessage: "庭の花が咲いてね" }).reason, "mode_contract_violation");
+  assert.equal(validate("昨夜は眠れなかったんですね。眠りについてもう少し話しますか？", "none", { currentUserMessage: "昨夜は眠れなかった" }).accepted, true);
+  assert.equal(validate("今日はいい天気ですね。", "none").reason, "mode_contract_violation");
+  assert.equal(validate("会話からFR-ICは3点です。", "none").reason, "mode_contract_violation");
 });
 
 test("safety contract does not apply normal question limits", () => {

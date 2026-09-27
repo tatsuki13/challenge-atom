@@ -4,105 +4,16 @@ import {
   type MemoryPromptContext,
   type MemoryRetrievalClarificationReason,
   type MemoryRetrievalMode,
+  type ReplyRejectionReason,
   type StoredChatMessage,
 } from "../conversationTypes";
 import {
   getRecentAssistantReplies,
   type ConversationTurnPlan,
 } from "./conversationEngine";
+import { buildTurnPlanInstruction } from "./conversationPrompt";
 import { SYSTEM_PROMPT } from "./systemPrompt";
 import { getReplyContract, getReplyContractInstructions } from "./replyValidation";
-
-const strategyInstructions: Record<ConversationTurnPlan["listeningStrategy"], string> = {
-  acknowledge: "短く受け止めてください。質問で詰めず、受け止めた後に相手が続けられる短い促しを添えてください。",
-  reflect_content: "発話内容を自然に言い換えて返してください。発話にない解釈や事実を足さず、質問または短い促しを一つだけ添えてください。",
-  reflect_emotion: "感情を断定しすぎず、穏やかに反映してください。無理に励まさず、話したければ続けられる余白を添えてください。",
-  show_interest: "発話内の具体的な人物・場所・活動・出来事の一つに自然な関心を示し、もう少し話せる入口を添えてください。",
-  ask_open_question: "相手が自由に話を広げられる質問を一つだけ添えてください。答えを限定しすぎないでください。",
-  ask_clarification: "意味が曖昧な一点だけを、短い質問で確認してください。推測で補わないでください。",
-  allow_silence: "短く受け止め、質問せず、話すことを強制しないでください。完全な無言にはしないでください。",
-  change_topic: "唐突にならない短い接続を置き、新しい話題を一つだけ提示してください。",
-};
-
-function clipForPrompt(text: string, maxLength = 180) {
-  return text.replace(/\s+/g, " ").trim().slice(0, maxLength);
-}
-
-function buildTurnPlanInstruction({
-  userMessage,
-  turnPlan,
-  recentAssistantReplies,
-  topicStarter,
-  topicTitle,
-}: {
-  userMessage: string;
-  turnPlan: ConversationTurnPlan;
-  recentAssistantReplies: string[];
-  topicStarter: boolean;
-  topicTitle: string | null;
-}) {
-  const lines = [
-    "# 今回の返答方針",
-    `- userMessage: ${clipForPrompt(userMessage)}`,
-    `- safetyLevel: ${turnPlan.safetyLevel}`,
-    `- mode: ${turnPlan.mode}`,
-    `- focusTerms: ${turnPlan.focusTerms.length > 0 ? turnPlan.focusTerms.join("、") : "なし"}`,
-    `- mainFocus: ${turnPlan.mainFocus ?? "なし"}`,
-    `- eventType: ${turnPlan.eventType}`,
-    `- topicType: ${turnPlan.topicType}`,
-    `- relationHint: ${turnPlan.relationHint ?? "なし"}`,
-    `- listeningStrategy: ${turnPlan.listeningStrategy}`,
-    `- strategyInstruction: ${strategyInstructions[turnPlan.listeningStrategy]}`,
-    `- shouldAskQuestion: ${turnPlan.shouldAskQuestion ? "true" : "false"}`,
-    `- suggestedQuestion: ${turnPlan.suggestedQuestion ?? "なし"}`,
-    `- topicStarter: ${topicStarter ? "true" : "false"}`,
-    `- topicTitle: ${topicTitle ?? "なし"}`,
-    "",
-    "# 必ず守ること",
-    "- mainFocus がある場合、まずその具体語に自然に反応してください。",
-    "- mainFocus がない場合でも、userMessage の中からいちばん会話が広がりそうな具体語を一つ選び、その言葉に反応してください。",
-    "- eventType と topicType を使い、話した相手・行った場所・食べた物・聞いた話題などの文脈に合わせてください。",
-    "- eventType が unknown でも、相づちだけで終えず、mainFocus について雑談を一言だけ足してください。",
-    "- 感情確認だけで返さず、出てきた人物・場所・食べ物・趣味・物・出来事を雑談として扱ってください。",
-    "- 「そうなんですね」「なるほど」「聞いています」だけで返答を終えないでください。",
-    "- suggestedQuestion は参考です。実際に質問するかは、後続のResponse contractを優先してください。",
-    "- 利用者の発話にない事実を作らず、感情や人物関係を断定しないでください。",
-    "- 高齢者を子ども扱いせず、評価・診断・説教をしないでください。",
-    "- 否定したり急かしたりせず、自然な短文を優先してください。",
-    "- 「印象に残ったことは？」「その時はどんな感じでしたか？」のような汎用質問は禁止です。",
-    "- talked_with/person の時は、相手との会話そのものに反応し、質問するなら「何の話で盛り上がったんですか？」のような自然な雑談にしてください。",
-    "- is_trending の時は、流行している具体語に反応し、感情確認へ逃げないでください。",
-    "- 返答は1〜2文を基本にしてください。",
-  ];
-
-  if (topicStarter) {
-    lines.push(
-      "",
-      "# 今日の話題ボタンから始まった会話",
-      "- これは利用者が話題ボタンを押して始めた会話です。",
-      "- 「それでは今回はこの話題でお話ししましょう。」に近い自然な一言から始めてください。",
-      "- topicTitle に自然に触れ、質問の有無はResponse contractに従ってください。",
-      "- ただし、面接や評価のような聞き方にはしないでください。",
-    );
-  }
-
-  if (turnPlan.avoidPatterns.length > 0) {
-    lines.push("", "# 避けること");
-    turnPlan.avoidPatterns.forEach((pattern) => {
-      lines.push(`- ${pattern}`);
-    });
-  }
-
-  if (recentAssistantReplies.length > 0) {
-    lines.push("", "# 直近3件のAI返答");
-    recentAssistantReplies.forEach((reply, index) => {
-      lines.push(`- ${index + 1}: ${clipForPrompt(reply, 90)}`);
-    });
-    lines.push("- 同じ出だしや同じ質問・促しを続けないでください。");
-  }
-
-  return lines.join("\n");
-}
 
 export function buildAiInput({
   messages,
@@ -114,6 +25,9 @@ export function buildAiInput({
   memoryMode = "none",
   memorySelectionRequired = false,
   memoryClarificationReason = "none",
+  memoryConfirmationContent = null,
+  rejectedReply = null,
+  replyRejectionReason = null,
 }: {
   messages: StoredChatMessage[];
   userMessage: string;
@@ -124,6 +38,9 @@ export function buildAiInput({
   memoryMode?: MemoryRetrievalMode;
   memorySelectionRequired?: boolean;
   memoryClarificationReason?: MemoryRetrievalClarificationReason;
+  memoryConfirmationContent?: string | null;
+  rejectedReply?: string | null;
+  replyRejectionReason?: ReplyRejectionReason | null;
 }) {
   const recentMessages = messages.slice(-RECENT_MESSAGE_LIMIT);
   const recentAssistantReplies = getRecentAssistantReplies(recentMessages);
@@ -131,6 +48,7 @@ export function buildAiInput({
     memoryMode,
     memorySelectionRequired,
     turnPlan.listeningStrategy,
+    turnPlan.questionPolicy,
   );
   const input: ResponseInputItem[] = [
     {
@@ -151,6 +69,33 @@ export function buildAiInput({
       role: "system",
       content: getReplyContractInstructions(replyContract).join("\n"),
     },
+    ...(rejectedReply && replyRejectionReason
+      ? [{
+          role: "system" as const,
+          content: [
+            "# Regeneration correction",
+            `The previous draft was rejected: ${replyRejectionReason}.`,
+            `Rejected draft: ${JSON.stringify(rejectedReply.slice(0, 500))}`,
+            "Generate a new response from scratch and do not mention this correction.",
+            "Keep the user's control of what to discuss or do next. Do not use ～しましょう（か） to decide the next step for them.",
+            "Do not ask about unobserved state just to complete an internal profile.",
+            "Follow the turn plan and response contract above exactly.",
+          ].join("\n"),
+        }]
+      : []),
+    ...(memoryConfirmationContent
+      ? [{
+          role: "system" as const,
+          content: [
+            "# Memory consent request",
+            `Proposed fact: ${JSON.stringify(memoryConfirmationContent)}`,
+            "This fact is not saved yet.",
+            "Generate a natural Japanese response that briefly receives the user's words and asks permission to remember this one fact for future conversations.",
+            "Include the proposed fact inside Japanese quotation marks 「」 and include the phrase 覚えておいてもよいですか in the single question.",
+            "Do not claim that it has already been remembered or saved.",
+          ].join("\n"),
+        }]
+      : []),
     ...(memoryMode === "clarification"
       ? [{
           role: "system" as const,
