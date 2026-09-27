@@ -12,6 +12,8 @@ import type {
   RiskLevel,
 } from "@/lib/conversationTypes";
 import type { EmotionScores, PhysicalSignals } from "@/lib/wellbeing";
+import { scoreEmotions, suggestConversation } from "@/lib/wellbeing";
+import EmotionVisualization, { getEmotionTone } from "./EmotionVisualization";
 
 type ChatMessage = {
   id: string;
@@ -234,6 +236,7 @@ export default function ConversationClient({
     ? `?conversationId=${encodeURIComponent(conversationId)}`
     : "";
   const conversationBusy = sending || restoringConversation || endingConversation;
+  const emotionTone = wellbeing ? getEmotionTone(wellbeing.emotionScores) : null;
 
   const refreshMetrics = useCallback(async () => {
     try {
@@ -350,6 +353,17 @@ export default function ConversationClient({
             emotionLabel: message.emotionLabel ?? undefined,
           })),
         ]);
+        const lastUserMessage = [...data.messages].reverse().find((message) => message.role === "user");
+        if (lastUserMessage) {
+          const emotionScores = scoreEmotions(lastUserMessage.text);
+          setWellbeing({
+            emotionScores,
+            physicalSignals: null,
+            conversationSuggestion: suggestConversation(emotionScores, null),
+          });
+        } else {
+          setWellbeing(null);
+        }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -357,6 +371,7 @@ export default function ConversationClient({
         restoredConversationIdRef.current = null;
         setConversationId(undefined);
         setMessages(initialMessages);
+        setWellbeing(null);
         setConversationNotice(
           "前の会話は終了済みか、読み込めませんでした。新しい会話を始められます。",
         );
@@ -717,6 +732,14 @@ export default function ConversationClient({
             <h1 className="text-3xl font-bold tracking-normal text-[#1b2530] sm:text-4xl">
               そばにいる会話AI
             </h1>
+            {emotionTone ? (
+              <p
+                className="mt-2 inline-flex rounded-full border px-3 py-1 text-sm font-semibold"
+                style={{ backgroundColor: emotionTone.surface, borderColor: emotionTone.color, color: emotionTone.color }}
+              >
+                直近の会話: {emotionTone.label}
+              </p>
+            ) : null}
           </div>
           <nav className="flex flex-col gap-3 sm:flex-row" aria-label="主なページ">
             <Link
@@ -911,28 +934,20 @@ export default function ConversationClient({
               {healthError ? <p className="mt-2 text-sm text-[#a04747]" role="alert">{healthError}</p> : null}
             </section>
             {wellbeing ? (
-              <section className="rounded-lg border border-[#d7e0ea] bg-white p-5 shadow-sm">
-                <h2 className="text-2xl font-bold">会話の参考値</h2>
-                <p className="mt-2 text-sm text-[#596a79]">感情は発話からの推定値です。</p>
-                <dl className="mt-3 grid grid-cols-2 gap-2 text-base">
-                  {([
-                    ["孤独感", wellbeing.emotionScores.loneliness],
-                    ["不安", wellbeing.emotionScores.anxiety],
-                    ["楽しさ", wellbeing.emotionScores.positive_affect],
-                    ["関心", wellbeing.emotionScores.interest],
-                  ] as const).map(([label, value]) => (
-                    <div key={label} className="rounded bg-[#f6f8fb] p-2"><dt>{label}</dt><dd className="font-bold">{value.toFixed(2)}</dd></div>
-                  ))}
-                </dl>
-                {wellbeing.physicalSignals ? (
-                  <p className="mt-3 text-sm leading-6">
-                    睡眠 {wellbeing.physicalSignals.sleepMinutes ?? "未取得"} 分 ・
-                    歩数 {wellbeing.physicalSignals.steps ?? "未取得"} 歩 ・
-                    安静時心拍 {wellbeing.physicalSignals.restingHeartRate ?? "未取得"} 回/分
-                  </p>
-                ) : <p className="mt-3 text-sm">身体データは未取得です。</p>}
-                <p className="mt-2 text-sm">会話方針: {wellbeing.conversationSuggestion}</p>
-              </section>
+              <>
+                <EmotionVisualization scores={wellbeing.emotionScores} />
+                <section className="rounded-lg border border-[#d7e0ea] bg-white p-5 shadow-sm">
+                  <h2 className="text-lg font-bold">会話の参考情報</h2>
+                  {wellbeing.physicalSignals ? (
+                    <p className="mt-2 text-sm leading-6">
+                      睡眠 {wellbeing.physicalSignals.sleepMinutes ?? "未取得"} 分 ・
+                      歩数 {wellbeing.physicalSignals.steps ?? "未取得"} 歩 ・
+                      安静時心拍 {wellbeing.physicalSignals.restingHeartRate ?? "未取得"} 回/分
+                    </p>
+                  ) : <p className="mt-2 text-sm">身体データは未取得です。</p>}
+                  <p className="mt-2 text-sm">会話方針: {wellbeing.conversationSuggestion}</p>
+                </section>
+              </>
             ) : null}
             <section className="rounded-lg border border-[#d7e0ea] bg-white p-5 shadow-sm">
               <h2 className="text-2xl font-bold text-[#1d2733]">
