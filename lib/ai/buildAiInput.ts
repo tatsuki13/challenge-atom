@@ -25,9 +25,13 @@ export function buildAiInput({
   memoryMode = "none",
   memorySelectionRequired = false,
   memoryClarificationReason = "none",
+<<<<<<< HEAD
   memoryConfirmationContent = null,
   rejectedReply = null,
   replyRejectionReason = null,
+=======
+  wellbeingContext,
+>>>>>>> test
 }: {
   messages: StoredChatMessage[];
   userMessage: string;
@@ -38,9 +42,13 @@ export function buildAiInput({
   memoryMode?: MemoryRetrievalMode;
   memorySelectionRequired?: boolean;
   memoryClarificationReason?: MemoryRetrievalClarificationReason;
+<<<<<<< HEAD
   memoryConfirmationContent?: string | null;
   rejectedReply?: string | null;
   replyRejectionReason?: ReplyRejectionReason | null;
+=======
+  wellbeingContext?: string;
+>>>>>>> test
 }) {
   const recentMessages = messages.slice(-RECENT_MESSAGE_LIMIT);
   const recentAssistantReplies = getRecentAssistantReplies(recentMessages);
@@ -69,6 +77,7 @@ export function buildAiInput({
       role: "system",
       content: getReplyContractInstructions(replyContract).join("\n"),
     },
+<<<<<<< HEAD
     ...(rejectedReply && replyRejectionReason
       ? [{
           role: "system" as const,
@@ -96,6 +105,19 @@ export function buildAiInput({
           ].join("\n"),
         }]
       : []),
+=======
+    ...(wellbeingContext ? [{
+      role: "system" as const,
+      content: [
+        "# 会話の参考情報",
+        wellbeingContext,
+        "スコアは発話からの簡易推定であり、事実や診断ではありません。身体データは取得時刻のある観測値です。",
+        "不安・孤独が高い場合は短く受け止め、質問攻めを避けてください。楽しさ・関心が高い場合は発話中の具体的な話題を広げてください。",
+        "睡眠・歩数・心拍の値だけから病気や感情を推定しないでください。数値を毎回読み上げず、押しつけずに会話の調子へ反映してください。",
+        "現在の利用者の発話と安全方針を優先してください。",
+      ].join("\n"),
+    }] : []),
+>>>>>>> test
     ...(memoryMode === "clarification"
       ? [{
           role: "system" as const,

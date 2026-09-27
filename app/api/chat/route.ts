@@ -35,6 +35,9 @@ import {
 import { normalizeDetectedMemoryManagementRequest } from "@/lib/ai/memoryManagementDetection";
 import { validateReplyAgainstContract } from "@/lib/ai/replyValidation";
 import { estimateEmotion } from "@/lib/emotion";
+import { scoreEmotions, suggestConversation } from "@/lib/wellbeing";
+import { getLatestPhysicalSignals } from "@/lib/healthSamples";
+import { syncGoogleHealth } from "@/lib/googleHealth";
 import { getCurrentUser } from "@/lib/auth";
 import {
   recordAssistantTurn,
@@ -612,9 +615,13 @@ async function createOpenAIReply({
   memoryMode,
   memorySelectionRequired,
   memoryClarificationReason,
+<<<<<<< HEAD
   memoryConfirmationContent,
   rejectedReply = null,
   replyRejectionReason = null,
+=======
+  wellbeingContext,
+>>>>>>> test
 }: {
   messages: StoredChatMessage[];
   userMessage: string;
@@ -625,9 +632,13 @@ async function createOpenAIReply({
   memoryMode: MemoryRetrievalMode;
   memorySelectionRequired: boolean;
   memoryClarificationReason: MemoryRetrievalRequest["clarificationReason"];
+<<<<<<< HEAD
   memoryConfirmationContent: string | null;
   rejectedReply?: string | null;
   replyRejectionReason?: ReplyRejectionReason | null;
+=======
+  wellbeingContext: string;
+>>>>>>> test
 }) {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   const model = process.env.OPENAI_MODEL?.trim();
@@ -657,9 +668,13 @@ async function createOpenAIReply({
     memoryMode,
     memorySelectionRequired,
     memoryClarificationReason,
+<<<<<<< HEAD
     memoryConfirmationContent,
     rejectedReply,
     replyRejectionReason,
+=======
+    wellbeingContext,
+>>>>>>> test
   });
 
   const response = await client.responses.create({
@@ -739,6 +754,15 @@ export async function POST(request: Request) {
 
   const riskLevel: RiskLevel = detectRisk(message);
   const emotionLabel = estimateEmotion(message);
+  const emotionScores = scoreEmotions(message);
+  await syncGoogleHealth(profileId).catch(() => null);
+  const physicalSignals = await getLatestPhysicalSignals(profileId).catch(() => null);
+  const conversationSuggestion = suggestConversation(emotionScores, physicalSignals);
+  const wellbeingContext = JSON.stringify({
+    emotionScores,
+    physicalSignals,
+    conversationSuggestion,
+  });
   const savedUserMessage = await recordUserMessage({
     profileId,
     conversationId,
@@ -748,6 +772,7 @@ export async function POST(request: Request) {
     clientMessageId,
     moodScore,
     emotionLabel,
+    emotionScores,
     riskLevel,
   });
   const recentAssistantReplies = getRecentAssistantReplies(
@@ -980,10 +1005,39 @@ export async function POST(request: Request) {
       };
     }
 
+    if (
+      finalTurnPlan &&
+      memoryRetrievalRequest?.mode !== "clarification" &&
+      !memorySearchEvaluation?.selectionRequired
+    ) {
+      if (emotionScores.anxiety >= 0.45 || emotionScores.loneliness >= 0.45) {
+        finalTurnPlan = {
+          ...finalTurnPlan,
+          mode: emotionScores.anxiety >= emotionScores.loneliness ? "anxiety" : "loneliness",
+          listeningStrategy: "reflect_emotion",
+          shouldAskQuestion: false,
+          suggestedQuestion: null,
+        };
+      } else if (emotionScores.positive_affect >= 0.45 || emotionScores.interest >= 0.45) {
+        finalTurnPlan = {
+          ...finalTurnPlan,
+          listeningStrategy: "show_interest",
+        };
+      } else if (physicalSignals?.sleepMinutes != null && physicalSignals.sleepMinutes < 360) {
+        finalTurnPlan = {
+          ...finalTurnPlan,
+          listeningStrategy: "acknowledge",
+          shouldAskQuestion: false,
+          suggestedQuestion: null,
+        };
+      }
+    }
+
     let generatedReply: string | null = null;
 
     if (hasOpenAIConfiguration) {
       try {
+<<<<<<< HEAD
         let rejectedReply: string | null = null;
         let previousRejectionReason: ReplyRejectionReason | null = null;
 
@@ -1023,6 +1077,30 @@ export async function POST(request: Request) {
           rejectedReply = candidateReply;
           previousRejectionReason = validation.reason;
         }
+=======
+        const candidateReply = await createOpenAIReply({
+          messages: savedUserMessage.recentMessages,
+          userMessage: message,
+          turnPlan: finalTurnPlan,
+          topicStarter,
+          topicTitle,
+          memories: memorySearchResults,
+          memoryMode: memoryRetrievalRequest?.mode ?? "none",
+          memorySelectionRequired: memorySearchEvaluation?.selectionRequired ?? false,
+          memoryClarificationReason: memoryRetrievalRequest?.clarificationReason ?? "none",
+          wellbeingContext,
+        });
+        const validation = validateReplyAgainstContract({
+          text: candidateReply ?? "",
+          memoryMode: memoryRetrievalRequest?.mode ?? "none",
+          memorySelectionRequired: memorySearchEvaluation?.selectionRequired ?? false,
+          listeningStrategy: finalTurnPlan?.listeningStrategy ?? null,
+          memories: memorySearchResults.map(toMemoryPromptContext),
+          currentUserMessage: message,
+        });
+        generatedReply = validation.accepted ? candidateReply : null;
+        replyRejectionReason = validation.reason;
+>>>>>>> test
       } catch {
         replyRejectionReason = "generation_error";
         console.warn("OpenAI response failed; using mock reply.");
@@ -1201,6 +1279,9 @@ export async function POST(request: Request) {
     planSource,
     generationSource,
     emotionLabel,
+    emotionScores,
+    physicalSignals,
+    conversationSuggestion,
     riskLevel,
     usedMock,
     memoryExtraction,
