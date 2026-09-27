@@ -9,8 +9,8 @@ import type {
   MemoryTemporalScope,
 } from "../conversationTypes";
 
-export const MEMORY_EXTRACTION_VERSION = "memory-candidate-v1";
-export const MAX_MEMORY_CANDIDATES_PER_TURN = 5;
+export const MEMORY_EXTRACTION_VERSION = "memory-confirmation-v2";
+export const MAX_MEMORY_CANDIDATES_PER_TURN = 1;
 export const MIN_MEMORY_CONFIDENCE = 0.75;
 
 const memoryCategories = new Set<MemoryCategory>([

@@ -17,6 +17,12 @@ import {
   validateMemoryCandidates,
 } from "@/lib/ai/memoryExtraction";
 import {
+  classifyMemoryConfirmationReply,
+  createMemoryConfirmationQuestion,
+  findPendingMemoryConfirmation,
+  type PendingMemoryConfirmation,
+} from "@/lib/ai/memoryConfirmation";
+import {
   MEMORY_RETRIEVAL_CONFIG,
   createContinuityFallbackRequest,
   createMemoryRetrievalAuditInput,
@@ -34,6 +40,7 @@ import {
   recordUserMessage,
 } from "@/lib/conversationStore";
 import { retrieveConfirmedMemories } from "@/lib/memoryRetrievalService";
+import { resolveMemoryCandidate } from "@/lib/memoryResolutionService";
 import {
   dedupeSourceUtteranceIds,
   isListeningStrategy,
@@ -443,12 +450,14 @@ async function createOpenAIPlanAnalysis({
   localPlan,
   topicStarter,
   topicTitle,
+  pendingMemoryConfirmation,
 }: {
   messages: StoredChatMessage[];
   userMessage: string;
   localPlan: ConversationTurnPlan;
   topicStarter: boolean;
   topicTitle: string | null;
+  pendingMemoryConfirmation: PendingMemoryConfirmation | null;
 }) {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   const model = process.env.OPENAI_MODEL?.trim();
@@ -478,15 +487,18 @@ async function createOpenAIPlanAnalysis({
           'Allowed topicType: person, place, food, activity, object, memory, feeling, unknown.',
           'Allowed listeningStrategy: acknowledge, reflect_content, reflect_emotion, show_interest, ask_open_question, ask_clarification, allow_silence, change_topic.',
           "suggestedQuestion must be a short natural Japanese question, not a generic interview question.",
-          "memoryCandidates must contain at most five durable facts useful in future conversations.",
-          "Extract memoryCandidates only from userMessage in this request. Never re-extract recentMessages.",
+          "memoryCandidates is used for a two-turn consent flow and must contain at most one durable fact.",
+          "When pendingMemoryConfirmation is null, extract at most one proposed fact only from userMessage. It will not be saved yet; the assistant will ask permission first.",
+          "When pendingMemoryConfirmation is present and userMessage explicitly agrees, reconstruct that one fact from pendingMemoryConfirmation and return it in memoryCandidates.",
+          "When pendingMemoryConfirmation is present and userMessage rejects or does not clearly agree, do not return that pending fact.",
+          "A short agreement such as はい is evidence of consent only when pendingMemoryConfirmation is present. Never treat a generic short reply as a standalone fact.",
           "Do not infer personality, emotion, diagnosis, cognition, or facts not stated by the user.",
           "Do not extract temporary emotion, meaningless short replies, news, television content, quoted claims, or third-party private information.",
           "Do not extract passwords, financial identifiers, government identifiers, phone numbers, email addresses, or detailed addresses.",
           "Use subject=user only when the fact is about the user. Use other or unknown otherwise.",
           "Use assertion=quoted for someone else's quoted statement and hypothetical only for a clearly stated user wish.",
           "Negative preferences must use category=preference and polarity=negative.",
-          "normalizedKey must be a short phrase grounded in wording from userMessage.",
+          "normalizedKey must be a short phrase grounded in userMessage, or in pendingMemoryConfirmation during an explicit confirmation turn.",
           "If nothing qualifies, return an empty memoryCandidates array.",
           "For memoryRetrieval, classify the current userMessage into exactly one mode. Do not assume whether the database contains a match; server-side retrieval handles that.",
           "Use topic_match when the user refers to a concrete remembered subject: categories and short concrete searchTerms are required.",
@@ -518,6 +530,7 @@ async function createOpenAIPlanAnalysis({
           topicTitle,
           localPlan,
           recentMessages,
+          pendingMemoryConfirmation,
         }),
       },
     ],
@@ -545,9 +558,16 @@ async function createOpenAIPlanAnalysis({
     } satisfies AiPlanAnalysis;
   }
 
+  const confirmationReply = pendingMemoryConfirmation
+    ? classifyMemoryConfirmationReply(userMessage)
+    : "unclear";
+  const validationUtterance =
+    pendingMemoryConfirmation && confirmationReply === "confirmed"
+      ? `${pendingMemoryConfirmation.sourceMessageContent}\n${pendingMemoryConfirmation.proposedContent}`
+      : userMessage;
   const memoryValidation = validateMemoryCandidates({
     rawCandidates: parsed.memoryCandidates,
-    currentUtterance: userMessage,
+    currentUtterance: validationUtterance,
   });
 
   return {
@@ -702,11 +722,18 @@ export async function POST(request: Request) {
   const recentAssistantReplies = getRecentAssistantReplies(
     savedUserMessage.recentMessages,
   );
+  const pendingMemoryConfirmation = findPendingMemoryConfirmation(
+    savedUserMessage.recentMessages,
+  );
+  const memoryConfirmationReply = pendingMemoryConfirmation
+    ? classifyMemoryConfirmationReply(message)
+    : "unclear";
   let finalTurnPlan: ConversationTurnPlan | null = null;
   let planSource: PlanSource;
-  let generationSource: GenerationSource;
-  let reply: string;
+  let generationSource: GenerationSource = "mock";
+  let reply = "";
   let extractedMemoryCandidates: ExtractedMemoryCandidate[] = [];
+  let proposedMemoryCandidates: ExtractedMemoryCandidate[] = [];
   let detectedMemoryManagementRequest: DetectedMemoryManagementRequest | null = null;
   let memoryManagementMatches: MemorySearchResult[] = [];
   let memoryRetrievalRequest: MemoryRetrievalRequest | null = null;
@@ -749,6 +776,7 @@ export async function POST(request: Request) {
           localPlan: turnPlan,
           topicStarter,
           topicTitle,
+          pendingMemoryConfirmation,
         });
 
         if (aiAnalysis) {
@@ -758,18 +786,29 @@ export async function POST(request: Request) {
             memoryRetrievalSource = "openai_plan";
           }
           detectedMemoryManagementRequest = aiAnalysis.memoryManagementRequest;
-          extractedMemoryCandidates =
+          const blocksNewMemory =
             detectedMemoryManagementRequest?.intent === "CORRECT" ||
-            detectedMemoryManagementRequest?.intent === "FORGET"
-              ? []
-              : aiAnalysis.memoryCandidates;
+            detectedMemoryManagementRequest?.intent === "FORGET";
+          const validatedCandidates = blocksNewMemory
+            ? []
+            : aiAnalysis.memoryCandidates.slice(0, 1);
+          if (pendingMemoryConfirmation && memoryConfirmationReply === "confirmed") {
+            extractedMemoryCandidates = validatedCandidates;
+          } else {
+            proposedMemoryCandidates = validatedCandidates;
+          }
+
           memoryExtraction = createMemoryExtractionResult(
-            extractedMemoryCandidates.length > 0
-              ? "no_candidates"
-              : aiAnalysis.rejectedCount > 0
-                ? "filtered"
-                : "no_candidates",
+            proposedMemoryCandidates.length > 0
+              ? "awaiting_confirmation"
+              : pendingMemoryConfirmation && memoryConfirmationReply === "rejected"
+                ? "confirmation_rejected"
+                : aiAnalysis.rejectedCount > 0
+                  ? "filtered"
+                  : "no_candidates",
             {
+              candidateCount: proposedMemoryCandidates.length,
+              categories: proposedMemoryCandidates.map((candidate) => candidate.category),
               rejectedCount: aiAnalysis.rejectedCount,
               rejectionReasonCodes: aiAnalysis.rejectionReasonCodes,
             },
@@ -783,6 +822,15 @@ export async function POST(request: Request) {
               recentAssistantReplies,
             );
             planSource = "openai";
+          }
+
+          if (proposedMemoryCandidates.length > 0 && finalTurnPlan) {
+            finalTurnPlan = {
+              ...finalTurnPlan,
+              listeningStrategy: "ask_clarification",
+              shouldAskQuestion: true,
+              suggestedQuestion: createMemoryConfirmationQuestion(proposedMemoryCandidates[0]),
+            };
           }
         }
       } catch {
@@ -899,7 +947,10 @@ export async function POST(request: Request) {
 
     let generatedReply: string | null = null;
 
-    if (hasOpenAIConfiguration) {
+    if (proposedMemoryCandidates.length > 0) {
+      reply = createMemoryConfirmationQuestion(proposedMemoryCandidates[0]);
+      generationSource = "mock";
+    } else if (hasOpenAIConfiguration) {
       try {
         const candidateReply = await createOpenAIReply({
           messages: savedUserMessage.recentMessages,
@@ -928,7 +979,10 @@ export async function POST(request: Request) {
       }
     }
 
-    if (generatedReply) {
+    if (proposedMemoryCandidates.length > 0) {
+      // The exact wording is deliberate: the next turn can prove that consent
+      // answered this specific memory question rather than an unrelated prompt.
+    } else if (generatedReply) {
       reply = generatedReply;
       generationSource = "openai";
     } else {
@@ -1039,11 +1093,14 @@ export async function POST(request: Request) {
     });
   }
   if (extractedMemoryCandidates.length > 0) {
+    const sourceMessageIds = pendingMemoryConfirmation
+      ? [pendingMemoryConfirmation.sourceMessageId, savedUserMessage.userMessage.id]
+      : [savedUserMessage.userMessage.id];
     const memoryWrite = await recordMemoryCandidates({
       profileId,
       conversationId: savedUserMessage.conversationId,
       decisionId: savedAssistantTurn.decision.id,
-      sourceMessageId: savedUserMessage.userMessage.id,
+      sourceMessageIds,
       storageBackend: savedUserMessage.storageBackend,
       candidates: extractedMemoryCandidates,
     });
@@ -1057,7 +1114,23 @@ export async function POST(request: Request) {
         ].filter((reason, index, reasons) => reasons.indexOf(reason) === index),
       });
     } else {
-      memoryExtraction = createMemoryExtractionResult("saved", {
+      const resolutionResults = await Promise.all(
+        memoryWrite.candidates.map(async (candidate) => {
+          try {
+            return await resolveMemoryCandidate({
+              profileId,
+              candidateId: candidate.id,
+              action: "ADD",
+              actor: "user",
+              reasonCode: "new_memory",
+            });
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const resolutionFailed = resolutionResults.some((result) => !result?.ok);
+      memoryExtraction = createMemoryExtractionResult(resolutionFailed ? "failed" : "saved", {
         candidateCount: memoryWrite.candidates.length,
         candidateIds: memoryWrite.candidates.map((candidate) => candidate.id),
         categories: [

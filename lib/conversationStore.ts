@@ -636,14 +636,14 @@ export async function recordMemoryCandidates({
   profileId = DEMO_PROFILE_ID,
   conversationId,
   decisionId,
-  sourceMessageId,
+  sourceMessageIds,
   storageBackend,
   candidates,
 }: {
   profileId?: string;
   conversationId: string;
   decisionId: string;
-  sourceMessageId: string;
+  sourceMessageIds: string[];
   storageBackend: StorageMode;
   candidates: ExtractedMemoryCandidate[];
 }): Promise<{
@@ -663,7 +663,7 @@ export async function recordMemoryCandidates({
         candidates: recordDemoMemoryCandidates({
           conversationId,
           decisionId,
-          sourceMessageId,
+          sourceMessageIds,
           candidates,
           extractionVersion: MEMORY_EXTRACTION_VERSION,
         }),
@@ -690,7 +690,8 @@ export async function recordMemoryCandidates({
 
   try {
     const storedCandidates = await prisma.$transaction(async (transaction) => {
-      const [conversation, decision, sourceMessage] = await Promise.all([
+      const uniqueSourceMessageIds = [...new Set(sourceMessageIds)];
+      const [conversation, decision, sourceMessages] = await Promise.all([
         transaction.conversation.findFirst({
           where: { id: conversationId, profileId },
           select: { id: true, profileId: true },
@@ -699,13 +700,18 @@ export async function recordMemoryCandidates({
           where: { id: decisionId, conversationId },
           select: { id: true, conversationId: true },
         }),
-        transaction.message.findFirst({
-          where: { id: sourceMessageId, conversationId, role: "user" },
+        transaction.message.findMany({
+          where: { id: { in: uniqueSourceMessageIds }, conversationId, role: "user" },
           select: { id: true, conversationId: true },
         }),
       ]);
 
-      if (!conversation || !decision || !sourceMessage) {
+      if (
+        !conversation ||
+        !decision ||
+        uniqueSourceMessageIds.length === 0 ||
+        sourceMessages.length !== uniqueSourceMessageIds.length
+      ) {
         throw new Error("memory_candidate_relation_validation_failed");
       }
 
@@ -728,7 +734,7 @@ export async function recordMemoryCandidates({
             status: "candidate",
             extractionVersion: MEMORY_EXTRACTION_VERSION,
             evidence: {
-              create: { sourceMessageId },
+              create: uniqueSourceMessageIds.map((sourceMessageId) => ({ sourceMessageId })),
             },
           },
         });
@@ -749,7 +755,7 @@ export async function recordMemoryCandidates({
           confidence: stored.confidence,
           status: "candidate",
           extractionVersion: stored.extractionVersion,
-          sourceUtteranceIds: [sourceMessageId],
+          sourceUtteranceIds: uniqueSourceMessageIds,
           createdAt: stored.createdAt,
         });
       }

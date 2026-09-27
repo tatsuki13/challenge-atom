@@ -349,6 +349,8 @@ export type MemoryResolutionReasonCode =
 
 export type MemoryExtractionStatus =
   | "saved"
+  | "awaiting_confirmation"
+  | "confirmation_rejected"
   | "no_candidates"
   | "filtered"
   | "failed"

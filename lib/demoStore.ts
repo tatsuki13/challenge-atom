@@ -417,13 +417,13 @@ export function recordDemoAssistantTurn({
 export function recordDemoMemoryCandidates({
   conversationId,
   decisionId,
-  sourceMessageId,
+  sourceMessageIds,
   candidates,
   extractionVersion,
 }: {
   conversationId: string;
   decisionId: string;
-  sourceMessageId: string;
+  sourceMessageIds: string[];
   candidates: ExtractedMemoryCandidate[];
   extractionVersion: string;
 }) {
@@ -432,8 +432,8 @@ export function recordDemoMemoryCandidates({
   const decision = state.decisions.find(
     (item) => item.id === decisionId && item.conversationId === conversationId,
   );
-  const sourceMessage = conversation?.messages.find(
-    (message) => message.id === sourceMessageId && message.role === "user",
+  const sourceMessages = conversation?.messages.filter(
+    (message) => sourceMessageIds.includes(message.id) && message.role === "user",
   );
 
   if (!conversation || conversation.profileId !== DEMO_PROFILE_ID) {
@@ -444,8 +444,8 @@ export function recordDemoMemoryCandidates({
     throw new Error("Memory candidate decision is invalid.");
   }
 
-  if (!sourceMessage) {
-    throw new Error("Memory candidate source must be a user message in the conversation.");
+  if (!sourceMessages || sourceMessages.length !== new Set(sourceMessageIds).size) {
+    throw new Error("Memory candidate sources must be user messages in the conversation.");
   }
 
   const storedCandidates: StoredMemoryCandidate[] = candidates.map((candidate) => ({
@@ -456,7 +456,7 @@ export function recordDemoMemoryCandidates({
     decisionId,
     status: "candidate",
     extractionVersion,
-    sourceUtteranceIds: [sourceMessageId],
+    sourceUtteranceIds: [...new Set(sourceMessageIds)],
     createdAt: new Date(),
   }));
 
