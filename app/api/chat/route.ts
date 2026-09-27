@@ -615,13 +615,10 @@ async function createOpenAIReply({
   memoryMode,
   memorySelectionRequired,
   memoryClarificationReason,
-<<<<<<< HEAD
   memoryConfirmationContent,
   rejectedReply = null,
   replyRejectionReason = null,
-=======
   wellbeingContext,
->>>>>>> test
 }: {
   messages: StoredChatMessage[];
   userMessage: string;
@@ -632,13 +629,10 @@ async function createOpenAIReply({
   memoryMode: MemoryRetrievalMode;
   memorySelectionRequired: boolean;
   memoryClarificationReason: MemoryRetrievalRequest["clarificationReason"];
-<<<<<<< HEAD
   memoryConfirmationContent: string | null;
   rejectedReply?: string | null;
   replyRejectionReason?: ReplyRejectionReason | null;
-=======
   wellbeingContext: string;
->>>>>>> test
 }) {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   const model = process.env.OPENAI_MODEL?.trim();
@@ -668,13 +662,10 @@ async function createOpenAIReply({
     memoryMode,
     memorySelectionRequired,
     memoryClarificationReason,
-<<<<<<< HEAD
     memoryConfirmationContent,
     rejectedReply,
     replyRejectionReason,
-=======
     wellbeingContext,
->>>>>>> test
   });
 
   const response = await client.responses.create({
@@ -1037,7 +1028,6 @@ export async function POST(request: Request) {
 
     if (hasOpenAIConfiguration) {
       try {
-<<<<<<< HEAD
         let rejectedReply: string | null = null;
         let previousRejectionReason: ReplyRejectionReason | null = null;
 
@@ -1055,6 +1045,7 @@ export async function POST(request: Request) {
             memoryConfirmationContent: proposedMemoryCandidates[0]?.content ?? null,
             rejectedReply,
             replyRejectionReason: previousRejectionReason,
+            wellbeingContext,
           });
           const validation = validateReplyAgainstContract({
             text: candidateReply ?? "",
@@ -1077,30 +1068,6 @@ export async function POST(request: Request) {
           rejectedReply = candidateReply;
           previousRejectionReason = validation.reason;
         }
-=======
-        const candidateReply = await createOpenAIReply({
-          messages: savedUserMessage.recentMessages,
-          userMessage: message,
-          turnPlan: finalTurnPlan,
-          topicStarter,
-          topicTitle,
-          memories: memorySearchResults,
-          memoryMode: memoryRetrievalRequest?.mode ?? "none",
-          memorySelectionRequired: memorySearchEvaluation?.selectionRequired ?? false,
-          memoryClarificationReason: memoryRetrievalRequest?.clarificationReason ?? "none",
-          wellbeingContext,
-        });
-        const validation = validateReplyAgainstContract({
-          text: candidateReply ?? "",
-          memoryMode: memoryRetrievalRequest?.mode ?? "none",
-          memorySelectionRequired: memorySearchEvaluation?.selectionRequired ?? false,
-          listeningStrategy: finalTurnPlan?.listeningStrategy ?? null,
-          memories: memorySearchResults.map(toMemoryPromptContext),
-          currentUserMessage: message,
-        });
-        generatedReply = validation.accepted ? candidateReply : null;
-        replyRejectionReason = validation.reason;
->>>>>>> test
       } catch {
         replyRejectionReason = "generation_error";
         console.warn("OpenAI response failed; using mock reply.");

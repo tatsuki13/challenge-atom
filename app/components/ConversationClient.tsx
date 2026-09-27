@@ -228,7 +228,7 @@ export default function ConversationClient({
   const [healthBusy, setHealthBusy] = useState(false);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [wellbeing, setWellbeing] = useState<Pick<ChatResponse, "emotionScores" | "physicalSignals" | "conversationSuggestion"> | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const conversationLogRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const speechHoldActiveRef = useRef(false);
@@ -394,7 +394,8 @@ export default function ConversationClient({
   }, [initialConversationId, router]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const log = conversationLogRef.current;
+    if (log) log.scrollTop = log.scrollHeight;
   }, [messages]);
 
   useEffect(() => {
@@ -617,10 +618,16 @@ export default function ConversationClient({
       });
 
       if (!response.ok) {
+        const errorBody = await response.json().catch(() => null) as { error?: unknown } | null;
+        const errorText = response.status === 401
+          ? "ログインの有効期限が切れました。再度ログインしてください。"
+          : response.status === 400 && typeof errorBody?.error === "string"
+            ? errorBody.error
+            : "会話を保存できませんでした。少し待ってからもう一度お試しください。";
         const fallbackMessage: ChatMessage = {
           id: createClientId(),
           role: "assistant",
-          text: "すみません、うまく受け取れませんでした。もう一度、短い言葉で送ってみてください。",
+          text: errorText,
           emotionLabel: "neutral",
           riskLevel: "none",
         };
@@ -801,7 +808,7 @@ export default function ConversationClient({
         </header>
 
         <section className="grid min-h-0 flex-1 gap-5 py-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="flex min-h-[720px] flex-col overflow-hidden rounded-lg border border-[#d7e0ea] bg-white shadow-sm">
+          <div className="flex h-[720px] min-w-0 flex-col overflow-hidden rounded-lg border border-[#d7e0ea] bg-white shadow-sm lg:h-[calc(100dvh-11rem)] lg:min-h-[620px] lg:self-start">
             {conversationNotice ? (
               <div
                 className="border-b border-[#c7d8e8] bg-[#eef5ff] px-4 py-3 text-lg font-semibold text-[#315b83] sm:px-5"
@@ -818,42 +825,34 @@ export default function ConversationClient({
               </div>
             ) : null}
 
-            <section className="flex min-h-[330px] flex-1 flex-col items-center justify-center bg-[radial-gradient(circle_at_center,_#f1fbf7_0%,_#ffffff_68%)] px-5 py-8 text-center sm:px-8">
+            <section className="flex shrink-0 items-center gap-3 border-b border-[#dfe6ee] bg-[radial-gradient(circle_at_center,_#f1fbf7_0%,_#ffffff_68%)] px-4 py-3 sm:gap-5 sm:px-5">
               <div
-                className="conversation-avatar"
+                className="conversation-avatar shrink-0"
                 data-speaking={avatarSpeaking}
                 data-thinking={sending || restoringConversation}
                 aria-label={avatarSpeaking ? "ATOMが話しています" : "ATOM"}
               >
                 <PetAvatar mood={getAvatarMood(latestAssistantMessage)} />
               </div>
-              <p className="mt-5 text-base font-bold tracking-[0.18em] text-[#3b7f6a]">
-                ATOM
-              </p>
-              <div
-                className="conversation-speech mt-3 w-full max-w-2xl rounded-2xl border border-[#c7ddd4] bg-white px-5 py-4 text-xl leading-8 text-[#1d3a32] shadow-sm sm:px-7 sm:text-2xl sm:leading-10"
-                role="status"
-                aria-live="polite"
-                aria-busy={sending || restoringConversation}
-              >
-                {avatarMessage}
+              <div className="min-w-0 flex-1">
+                <p className="mb-2 text-sm font-bold tracking-[0.18em] text-[#3b7f6a]">ATOM</p>
+                <div
+                  className="max-h-32 overflow-y-auto break-words rounded-2xl border border-[#c7ddd4] bg-white px-4 py-3 text-lg leading-7 text-[#1d3a32] shadow-sm sm:px-5"
+                  role="status"
+                  aria-live="polite"
+                  aria-busy={sending || restoringConversation}
+                >
+                  {avatarMessage}
+                </div>
               </div>
             </section>
 
-            <details className="conversation-log group border-t border-[#dfe6ee] bg-white">
-              <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-lg font-bold text-[#1d2733] transition hover:bg-[#f4f8f6] focus-visible:outline focus-visible:outline-4 focus-visible:outline-[#cfe8df] sm:px-5 [&::-webkit-details-marker]:hidden">
+            <section className="flex min-h-0 flex-1 flex-col" aria-label="対話ログ">
+              <div className="flex shrink-0 items-center justify-between border-b border-[#e7edf2] px-4 py-2 text-base font-bold sm:px-5">
                 <span>対話ログ</span>
-                <span className="flex items-center gap-3 text-base font-semibold text-[#596a79]">
-                  {messages.length}件
-                  <span
-                    className="text-2xl leading-none transition-transform group-open:rotate-180"
-                    aria-hidden="true"
-                  >
-                    ⌄
-                  </span>
-                </span>
-              </summary>
-              <div className="max-h-80 space-y-4 overflow-y-auto overscroll-contain border-t border-[#e7edf2] bg-[#f9fbfd] px-4 py-5 sm:px-5">
+                <span className="text-sm text-[#596a79]">{messages.length}件</span>
+              </div>
+              <div ref={conversationLogRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain bg-[#f9fbfd] px-4 py-4 sm:px-5">
                 {messages.map((message) => {
                   const isAssistant = message.role === "assistant";
 
@@ -863,7 +862,7 @@ export default function ConversationClient({
                       className={`flex ${isAssistant ? "justify-start" : "justify-end"}`}
                     >
                       <div
-                        className={`max-w-[88%] rounded-lg px-4 py-3 text-lg leading-7 shadow-sm ${
+                        className={`max-w-[88%] break-words rounded-lg px-4 py-3 text-lg leading-7 shadow-sm ${
                           isAssistant
                             ? "border border-[#d5e3dd] bg-white text-[#1d3a32]"
                             : "bg-[#265d8f] text-white"
@@ -894,13 +893,12 @@ export default function ConversationClient({
                     </article>
                   );
                 })}
-                <div ref={messagesEndRef} />
               </div>
-            </details>
+            </section>
 
             <form
               onSubmit={sendMessage}
-              className="border-t border-[#dfe6ee] bg-[#f9fbfd] p-4 sm:p-5"
+              className="shrink-0 border-t border-[#dfe6ee] bg-[#f9fbfd] p-3 sm:p-4"
             >
               <label
                 htmlFor="message"
@@ -917,11 +915,11 @@ export default function ConversationClient({
                   setInput(event.target.value);
                   setInputType("text");
                 }}
-                className="min-h-32 w-full resize-none rounded-lg border border-[#b8c6d6] bg-white p-4 text-2xl leading-9 outline-none transition focus:border-[#2f7c68] focus:ring-4 focus:ring-[#cfe8df]"
+                className="h-24 w-full resize-none rounded-lg border border-[#b8c6d6] bg-white p-3 text-xl leading-8 outline-none transition focus:border-[#2f7c68] focus:ring-4 focus:ring-[#cfe8df] sm:h-28 sm:p-4 sm:text-2xl"
                 placeholder="ここに入力してください"
                 maxLength={1000}
               />
-              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
                 <button
                   type="button"
                   onPointerDown={startListening}

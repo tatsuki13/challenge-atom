@@ -25,13 +25,10 @@ export function buildAiInput({
   memoryMode = "none",
   memorySelectionRequired = false,
   memoryClarificationReason = "none",
-<<<<<<< HEAD
   memoryConfirmationContent = null,
   rejectedReply = null,
   replyRejectionReason = null,
-=======
   wellbeingContext,
->>>>>>> test
 }: {
   messages: StoredChatMessage[];
   userMessage: string;
@@ -42,13 +39,10 @@ export function buildAiInput({
   memoryMode?: MemoryRetrievalMode;
   memorySelectionRequired?: boolean;
   memoryClarificationReason?: MemoryRetrievalClarificationReason;
-<<<<<<< HEAD
   memoryConfirmationContent?: string | null;
   rejectedReply?: string | null;
   replyRejectionReason?: ReplyRejectionReason | null;
-=======
   wellbeingContext?: string;
->>>>>>> test
 }) {
   const recentMessages = messages.slice(-RECENT_MESSAGE_LIMIT);
   const recentAssistantReplies = getRecentAssistantReplies(recentMessages);
@@ -77,7 +71,6 @@ export function buildAiInput({
       role: "system",
       content: getReplyContractInstructions(replyContract).join("\n"),
     },
-<<<<<<< HEAD
     ...(rejectedReply && replyRejectionReason
       ? [{
           role: "system" as const,
@@ -105,7 +98,6 @@ export function buildAiInput({
           ].join("\n"),
         }]
       : []),
-=======
     ...(wellbeingContext ? [{
       role: "system" as const,
       content: [
@@ -117,7 +109,6 @@ export function buildAiInput({
         "現在の利用者の発話と安全方針を優先してください。",
       ].join("\n"),
     }] : []),
->>>>>>> test
     ...(memoryMode === "clarification"
       ? [{
           role: "system" as const,

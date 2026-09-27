@@ -115,17 +115,17 @@ textarea {
 .conversation-avatar {
   position: relative;
   display: grid;
-  width: 154px;
-  height: 138px;
+  width: 90px;
+  height: 80px;
   place-items: center;
 }
 
 .conversation-avatar::after {
   position: absolute;
-  right: 16px;
-  bottom: 4px;
-  left: 16px;
-  height: 18px;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  height: 12px;
   border-radius: 50%;
   background: rgb(47 124 104 / 14%);
   filter: blur(7px);
@@ -134,7 +134,7 @@ textarea {
 
 .conversation-avatar .pet-avatar {
   z-index: 1;
-  transform: scale(2.35);
+  transform: scale(1.35);
   animation: none;
 }
 
@@ -148,23 +148,6 @@ textarea {
 
 .conversation-avatar[data-speaking="true"] .pet-mouth {
   animation: pet-mouth-speaking 0.38s ease-in-out infinite alternate;
-}
-
-.conversation-speech {
-  position: relative;
-}
-
-.conversation-speech::before {
-  position: absolute;
-  top: -9px;
-  left: 50%;
-  width: 16px;
-  height: 16px;
-  border-top: 1px solid #c7ddd4;
-  border-left: 1px solid #c7ddd4;
-  background: white;
-  content: "";
-  transform: translateX(-50%) rotate(45deg);
 }
 
 @keyframes avatar-listening {
