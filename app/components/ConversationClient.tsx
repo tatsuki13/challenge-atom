@@ -115,7 +115,7 @@ const initialMessages: ChatMessage[] = [
   {
     id: "welcome",
     role: "assistant",
-    text: "こんにちは。今日はどんな一日でしたか？ゆっくりで大丈夫です。",
+    text: "こんにちは。今日の天気はどうですか？",
     emotionLabel: "positive",
     riskLevel: "none",
   },
